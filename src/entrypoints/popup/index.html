@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>تَيَامُن</title>
+  </head>
+  <body>
+    <main class="popup-shell">
+      <header class="brand">
+        <img class="brand-mark" src="/icon-64.png" alt="" aria-hidden="true" />
+        <div>
+          <h1>تَيَامُن</h1>
+          <p>قراءة أوضح للنص العربي</p>
+        </div>
+      </header>
+
+      <section id="site-panel" class="site-panel" hidden>
+        <div class="site-heading">
+          <span>إعدادات هذا الموقع</span>
+          <strong id="hostname" dir="ltr"></strong>
+        </div>
+
+        <form id="settings-form">
+          <fieldset>
+            <legend class="visually-hidden">خيارات الموقع</legend>
+
+            <label class="setting-row" for="enabled">
+              <span class="setting-copy">
+                <strong>تفعيل تَيَامُن</strong>
+                <small>تحسين اتجاه النص تلقائيًا</small>
+              </span>
+              <input id="enabled" class="toggle-input" type="checkbox" />
+              <span class="toggle" aria-hidden="true"></span>
+            </label>
+
+            <label class="setting-row" for="align-right">
+              <span class="setting-copy">
+                <strong>محاذاة النص يمينًا</strong>
+                <small>مع إبقاء النص المتوسط والمضبوط كما هو</small>
+              </span>
+              <input id="align-right" class="toggle-input" type="checkbox" />
+              <span class="toggle" aria-hidden="true"></span>
+            </label>
+
+            <label class="setting-row" for="improve-font">
+              <span class="setting-copy">
+                <strong>حسّن الخط</strong>
+                <small>استخدام خط Tajawal مع النصوص المتأثرة</small>
+              </span>
+              <input id="improve-font" class="toggle-input" type="checkbox" />
+              <span class="toggle" aria-hidden="true"></span>
+            </label>
+          </fieldset>
+        </form>
+
+        <p id="save-status" class="save-status" aria-live="polite"></p>
+      </section>
+
+      <section id="restricted-panel" class="restricted-panel" role="status" hidden>
+        <div aria-hidden="true">—</div>
+        <strong>لا يمكن تعديل هذه الصفحة</strong>
+        <p id="restricted-message">صفحات المتصفح الداخلية غير مدعومة.</p>
+      </section>
+
+      <footer>تعمل الإضافة محليًا ولا تجمع أي بيانات.</footer>
+    </main>
+
+    <script type="module" src="./main.ts"></script>
+  </body>
+</html>

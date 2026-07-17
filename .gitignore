@@ -1,0 +1,12 @@
+node_modules/
+.output/
+.wxt/
+coverage/
+.playwright-cli/
+web-ext-artifacts/
+*.tsbuildinfo
+*.log
+.env
+.env.*
+!.env.example
+.DS_Store

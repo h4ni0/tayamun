@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1400 560" role="img" aria-labelledby="title desc">
+  <title id="title">صورة ترويجية عريضة لتَيَامُن</title>
+  <desc id="desc">مساحة زرقاء عميقة يتوسطها رمز نص مضبوط إلى اليمين تحيط به كتل أسطر مجردة</desc>
+  <defs>
+    <linearGradient id="field" x1="55" y1="30" x2="1350" y2="550" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#163F5C"/>
+      <stop offset=".48" stop-color="#0C2D45"/>
+      <stop offset="1" stop-color="#071B2A"/>
+    </linearGradient>
+    <linearGradient id="gold" x1="0" y1="178" x2="0" y2="380" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#FFD166"/>
+      <stop offset="1" stop-color="#F5A623"/>
+    </linearGradient>
+    <radialGradient id="tealGlow" cx="0" cy="0" r="1" gradientTransform="translate(1145 98) rotate(132) scale(470 600)" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#2EC4B6" stop-opacity=".44"/>
+      <stop offset="1" stop-color="#2EC4B6" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="goldGlow" cx="0" cy="0" r="1" gradientTransform="translate(170 515) rotate(-38) scale(420 520)" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#FFD166" stop-opacity=".24"/>
+      <stop offset="1" stop-color="#FFD166" stop-opacity="0"/>
+    </radialGradient>
+    <filter id="shadow" x="-30%" y="-30%" width="160%" height="175%">
+      <feDropShadow dx="0" dy="22" stdDeviation="22" flood-color="#020A10" flood-opacity=".4"/>
+    </filter>
+  </defs>
+  <rect width="1400" height="560" fill="url(#field)"/>
+  <rect width="1400" height="560" fill="url(#tealGlow)"/>
+  <rect width="1400" height="560" fill="url(#goldGlow)"/>
+  <circle cx="1258" cy="42" r="198" fill="none" stroke="#BDEDE8" stroke-opacity=".11" stroke-width="44"/>
+  <circle cx="91" cy="544" r="210" fill="none" stroke="#FFD166" stroke-opacity=".1" stroke-width="54"/>
+
+  <g opacity=".28">
+    <path d="M80 142H360" stroke="#F7FBFC" stroke-width="18" stroke-linecap="round"/>
+    <path d="M80 190H292" stroke="#BDEDE8" stroke-width="18" stroke-linecap="round"/>
+    <path d="M80 238H410" stroke="#F7FBFC" stroke-width="18" stroke-linecap="round"/>
+    <path d="M80 338H334" stroke="#BDEDE8" stroke-width="18" stroke-linecap="round"/>
+    <path d="M80 386H392" stroke="#F7FBFC" stroke-width="18" stroke-linecap="round"/>
+  </g>
+  <g opacity=".54">
+    <path d="M1040 130H1304" stroke="#F7FBFC" stroke-width="18" stroke-linecap="round"/>
+    <path d="M1118 178H1304" stroke="#BDEDE8" stroke-width="18" stroke-linecap="round"/>
+    <path d="M984 226H1304" stroke="#F7FBFC" stroke-width="18" stroke-linecap="round"/>
+    <rect x="1328" y="112" width="13" height="132" rx="6.5" fill="#FFD166"/>
+    <path d="M1066 342H1304" stroke="#BDEDE8" stroke-width="18" stroke-linecap="round"/>
+    <path d="M1010 390H1304" stroke="#F7FBFC" stroke-width="18" stroke-linecap="round"/>
+    <path d="M1145 438H1304" stroke="#BDEDE8" stroke-width="18" stroke-linecap="round"/>
+  </g>
+
+  <g transform="translate(520 100)" filter="url(#shadow)">
+    <rect width="360" height="360" rx="92" fill="#F7FBFC"/>
+    <rect x="28" y="28" width="304" height="304" rx="74" fill="url(#field)"/>
+    <path d="M100 116H216" stroke="#F7FBFC" stroke-width="25" stroke-linecap="round"/>
+    <path d="M126 181H216" stroke="#BDEDE8" stroke-width="25" stroke-linecap="round"/>
+    <path d="M82 246H216" stroke="#F7FBFC" stroke-width="25" stroke-linecap="round"/>
+    <rect x="247" y="92" width="25" height="178" rx="12.5" fill="url(#gold)"/>
+  </g>
+</svg>

@@ -1,0 +1,25 @@
+{
+  "extensionName": {
+    "message": "تَيَامُن",
+    "description": "اسم الإضافة"
+  },
+  "extensionDescription": {
+    "message": "يُحسّن اتجاه النصوص العربية والإنجليزية المختلطة على صفحات الويب من دون تغيير المحتوى أو تخطيط الصفحة.",
+    "description": "وصف الإضافة في المتصفح والمتجر"
+  },
+  "enableTayamun": {
+    "message": "تفعيل تَيَامُن"
+  },
+  "alignTextRight": {
+    "message": "محاذاة النص يمينًا"
+  },
+  "improveFont": {
+    "message": "حسّن الخط"
+  },
+  "restrictedPage": {
+    "message": "لا يمكن تعديل هذه الصفحة"
+  },
+  "privacyNote": {
+    "message": "تعمل الإضافة محليًا ولا تجمع أي بيانات."
+  }
+}

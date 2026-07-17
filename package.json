@@ -1,0 +1,47 @@
+{
+  "name": "tayamun",
+  "description": "يجعل النصوص العربية والإنجليزية المختلطة أسهل قراءةً على الويب.",
+  "private": true,
+  "version": "0.1.2",
+  "license": "MIT",
+  "author": "Hani (h4ni0)",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/h4ni0/tayamun.git"
+  },
+  "bugs": {
+    "url": "https://github.com/h4ni0/tayamun/issues"
+  },
+  "homepage": "https://github.com/h4ni0/tayamun#readme",
+  "type": "module",
+  "engines": {
+    "node": ">=20.19.0"
+  },
+  "scripts": {
+    "dev": "wxt",
+    "dev:firefox": "wxt -b firefox",
+    "compile": "tsc --noEmit",
+    "test": "vitest run --environment happy-dom",
+    "check": "npm run compile && npm test",
+    "build": "npm run build:chrome && npm run build:firefox",
+    "build:chrome": "wxt build -b chrome",
+    "build:firefox": "wxt build -b firefox",
+    "zip": "npm run zip:chrome && npm run zip:firefox",
+    "zip:chrome": "wxt zip -b chrome",
+    "zip:firefox": "wxt zip -b firefox --sources",
+    "release": "npm run check && npm run zip",
+    "postinstall": "wxt prepare"
+  },
+  "devDependencies": {
+    "happy-dom": "^20.10.6",
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.10",
+    "wxt": "^0.20.27"
+  },
+  "overrides": {
+    "esbuild": "0.28.1",
+    "fx-runner": "1.5.0",
+    "tmp": "0.2.7",
+    "uuid": "11.1.1"
+  }
+}

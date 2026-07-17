@@ -1,0 +1,65 @@
+@font-face {
+  font-family: "Tajawal Tayamun";
+  src: url("/fonts/Tajawal-500-arabic.woff2") format("woff2");
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  unicode-range: U+0600-06FF, U+0750-077F, U+0870-089F, U+08A0-08FF, U+FB50-FDFF, U+FE70-FEFF;
+}
+
+@font-face {
+  font-family: "Tajawal Tayamun";
+  src: url("/fonts/Tajawal-500-arabic.woff2") format("woff2");
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  unicode-range: U+0600-06FF, U+0750-077F, U+0870-089F, U+08A0-08FF, U+FB50-FDFF, U+FE70-FEFF;
+}
+
+@font-face {
+  font-family: "Tajawal Tayamun";
+  src: url("/fonts/Tajawal-700-arabic.woff2") format("woff2");
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  unicode-range: U+0600-06FF, U+0750-077F, U+0870-089F, U+08A0-08FF, U+FB50-FDFF, U+FE70-FEFF;
+}
+
+@font-face {
+  font-family: "Tajawal Tayamun";
+  src: url("/fonts/Tajawal-500-latin.woff2") format("woff2");
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  unicode-range: U+0000-024F, U+1E00-1EFF, U+2000-206F;
+}
+
+@font-face {
+  font-family: "Tajawal Tayamun";
+  src: url("/fonts/Tajawal-500-latin.woff2") format("woff2");
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  unicode-range: U+0000-024F, U+1E00-1EFF, U+2000-206F;
+}
+
+@font-face {
+  font-family: "Tajawal Tayamun";
+  src: url("/fonts/Tajawal-700-latin.woff2") format("woff2");
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  unicode-range: U+0000-024F, U+1E00-1EFF, U+2000-206F;
+}
+
+/* Most direction fixes use one lightweight marker; inline styles are reserved
+   for author-important LTR rules that this selector cannot override. */
+[data-tayamun-affected-q7m3] {
+  direction: rtl !important;
+  unicode-bidi: isolate !important;
+}
+
+/* Font markers are applied in bounded scheduler slices to avoid one large reflow. */
+[data-tayamun-font-q7m3] {
+  font-family: "Tajawal Tayamun", Tajawal, sans-serif !important;
+}

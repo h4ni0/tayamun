@@ -1,0 +1,140 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 800" role="img" aria-labelledby="title desc">
+  <title id="title">تَيَامُن يعمل على صفحة عربية مختلطة بالإنجليزية</title>
+  <desc id="desc">لقطة توضيحية لنافذة الإضافة العربية فوق مقال ذي اتجاه مضبوط</desc>
+  <defs>
+    <linearGradient id="browserBar" x1="0" y1="0" x2="0" y2="104" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#F9FBFC"/>
+      <stop offset="1" stop-color="#EAF0F3"/>
+    </linearGradient>
+    <linearGradient id="brand" x1="0" y1="0" x2="1" y2="1">
+      <stop stop-color="#173F5F"/>
+      <stop offset="1" stop-color="#0B2438"/>
+    </linearGradient>
+    <linearGradient id="gold" x1="0" y1="0" x2="0" y2="1">
+      <stop stop-color="#FFD166"/>
+      <stop offset="1" stop-color="#F5A623"/>
+    </linearGradient>
+    <filter id="frameShadow" x="-10%" y="-12%" width="120%" height="130%">
+      <feDropShadow dx="0" dy="18" stdDeviation="22" flood-color="#143044" flood-opacity=".18"/>
+    </filter>
+    <filter id="popupShadow" x="-20%" y="-15%" width="140%" height="145%">
+      <feDropShadow dx="0" dy="18" stdDeviation="19" flood-color="#071D2D" flood-opacity=".23"/>
+    </filter>
+    <filter id="cardShadow" x="-12%" y="-18%" width="124%" height="140%">
+      <feDropShadow dx="0" dy="8" stdDeviation="12" flood-color="#16384E" flood-opacity=".08"/>
+    </filter>
+  </defs>
+
+  <rect width="1280" height="800" fill="#DDE8EC"/>
+  <circle cx="91" cy="730" r="164" fill="#2EC4B6" opacity=".08"/>
+  <circle cx="1196" cy="85" r="182" fill="#FFD166" opacity=".1"/>
+
+  <g filter="url(#frameShadow)">
+    <rect x="34" y="28" width="1212" height="744" rx="24" fill="#F6F9FA"/>
+    <path d="M58 28H1222a24 24 0 0 1 24 24v69H34V52a24 24 0 0 1 24-24Z" fill="url(#browserBar)"/>
+  </g>
+
+  <!-- browser controls -->
+  <circle cx="68" cy="67" r="7" fill="#FF6B6B"/>
+  <circle cx="91" cy="67" r="7" fill="#FFD166"/>
+  <circle cx="114" cy="67" r="7" fill="#35C98B"/>
+  <path d="M157 66h18M160 66l6-6M160 66l6 6" fill="none" stroke="#70828D" stroke-width="3" stroke-linecap="round"/>
+  <path d="M205 60l6 6-6 6" fill="none" stroke="#AFBDC4" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+
+  <rect x="256" y="48" width="700" height="39" rx="19.5" fill="#FFFFFF" stroke="#D4E0E5"/>
+  <circle cx="283" cy="67" r="7" fill="none" stroke="#78909C" stroke-width="2"/>
+  <path d="M280 67l2 2 4-5" fill="none" stroke="#78909C" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+  <text x="316" y="73" font-family="Tajawal, sans-serif" font-size="15" fill="#5D707B">example.com/article</text>
+
+  <g transform="translate(1121 45)">
+    <rect width="44" height="44" rx="12" fill="url(#brand)"/>
+    <path d="M13 15h15M17 22h11M11 29h17" stroke="#F7FBFC" stroke-width="3" stroke-linecap="round"/>
+    <rect x="32" y="12" width="3" height="20" rx="1.5" fill="url(#gold)"/>
+  </g>
+  <circle cx="1196" cy="67" r="3" fill="#70828D"/><circle cx="1207" cy="67" r="3" fill="#70828D"/><circle cx="1218" cy="67" r="3" fill="#70828D"/>
+
+  <!-- article page -->
+  <rect x="34" y="121" width="1212" height="651" rx="0 0 24 24" fill="#F4F8F9"/>
+  <g font-family="Tajawal, sans-serif" direction="rtl">
+    <g transform="translate(82 148)">
+      <rect width="711" height="72" rx="18" fill="#FFFFFF" filter="url(#cardShadow)"/>
+      <g transform="translate(641 15)">
+        <rect width="42" height="42" rx="13" fill="url(#brand)"/>
+        <path d="M12 15h15M16 22h11M10 29h17" stroke="#F7FBFC" stroke-width="3" stroke-linecap="round"/>
+        <rect x="31" y="12" width="3" height="20" rx="1.5" fill="#FFD166"/>
+      </g>
+      <text x="625" y="34" text-anchor="start" font-size="19" font-weight="700" fill="#102D42">مجلّة المساحة</text>
+      <text x="625" y="55" text-anchor="start" font-size="13" fill="#78909C">أفكار عملية لويب أوضح</text>
+      <text x="43" y="42" text-anchor="start" font-size="14" fill="#617884" direction="ltr">١٤ يوليو ٢٠٢٦</text>
+    </g>
+
+    <g transform="translate(82 242)">
+      <rect width="711" height="468" rx="22" fill="#FFFFFF" filter="url(#cardShadow)"/>
+      <rect x="32" y="31" width="94" height="31" rx="15.5" fill="#E3F7F4"/>
+      <text x="111" y="52" text-anchor="start" font-size="14" font-weight="500" fill="#087E73">تجربة القراءة</text>
+      <text x="671" y="112" text-anchor="start" font-size="34" font-weight="700" fill="#102D42">اتجاه أوضح للنص العربي مع English</text>
+      <text x="671" y="151" text-anchor="start" font-size="17" fill="#70828D">عندما تبدأ الجملة بالعربية، يبقى اتجاه الكتلة طبيعيًا</text>
+
+      <rect x="32" y="184" width="647" height="118" rx="17" fill="#F4F8F9" stroke="#E1EAEE"/>
+      <rect x="645" y="204" width="6" height="78" rx="3" fill="#2EC4B6"/>
+      <text x="623" y="226" text-anchor="start" font-size="18" fill="#233F50">تبدأ الفكرة من الكلمة الأولى، ثم تأتي أسماء مثل</text>
+      <text x="623" y="257" text-anchor="start" font-size="18" fill="#233F50">TypeScript وChrome من دون أن تنقلب علامات الترقيم.</text>
+      <text x="623" y="282" text-anchor="start" font-size="14" fill="#78909C">يبقى ترتيب الأزرار والرموز والتخطيط كما هو.</text>
+
+      <text x="671" y="350" text-anchor="start" font-size="19" font-weight="700" fill="#173F5F">قراءة مريحة، من دون تغيير المحتوى</text>
+      <path d="M386 379H671M318 410H671M448 441H671" stroke="#C9D7DC" stroke-width="9" stroke-linecap="round"/>
+      <circle cx="62" cy="409" r="34" fill="#E3F7F4"/>
+      <path d="M47 408h24M55 398l-10 10 10 10" fill="none" stroke="#1A9E92" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+    </g>
+  </g>
+
+  <!-- popup -->
+  <g transform="translate(836 137)" filter="url(#popupShadow)">
+    <rect width="360" height="556" rx="24" fill="#FFFFFF"/>
+    <g transform="translate(286 26)">
+      <rect width="48" height="48" rx="14" fill="url(#brand)"/>
+      <path d="M14 17h17M18 24h13M12 31h19" stroke="#F7FBFC" stroke-width="3.5" stroke-linecap="round"/>
+      <rect x="36" y="13" width="3.5" height="24" rx="1.75" fill="url(#gold)"/>
+    </g>
+    <g font-family="Tajawal, sans-serif" direction="rtl">
+      <text x="272" y="48" text-anchor="start" font-size="24" font-weight="700" fill="#102D42">تَيَامُن</text>
+      <text x="272" y="69" text-anchor="start" font-size="13" fill="#78909C">قراءة عربية أوضح</text>
+
+      <rect x="26" y="96" width="308" height="64" rx="16" fill="#F4F8F9"/>
+      <circle cx="306" cy="128" r="14" fill="#D8E5E9"/>
+      <path d="M300 128h12M306 122v12" stroke="#617884" stroke-width="2" stroke-linecap="round"/>
+      <text x="280" y="122" text-anchor="start" font-size="13" fill="#78909C">إعدادات هذا الموقع</text>
+      <text x="280" y="143" text-anchor="end" font-size="15" font-weight="500" fill="#173F5F" direction="ltr">example.com</text>
+
+      <text x="318" y="204" text-anchor="start" font-size="17" font-weight="500" fill="#173F5F">تفعيل تَيَامُن</text>
+      <text x="318" y="227" text-anchor="start" font-size="13" fill="#78909C">تحسين اتجاه النص تلقائيًا</text>
+      <g transform="translate(27 191)">
+        <rect width="48" height="27" rx="13.5" fill="#1A9E92"/>
+        <circle cx="34.5" cy="13.5" r="10" fill="#FFFFFF"/>
+      </g>
+      <path d="M26 250H334" stroke="#E7EEF1"/>
+
+      <text x="318" y="290" text-anchor="start" font-size="17" font-weight="500" fill="#173F5F">محاذاة النص يمينًا</text>
+      <text x="318" y="313" text-anchor="start" font-size="13" fill="#78909C">مع الحفاظ على التوسيط والضبط</text>
+      <g transform="translate(27 277)">
+        <rect width="48" height="27" rx="13.5" fill="#D9E3E7"/>
+        <circle cx="13.5" cy="13.5" r="10" fill="#FFFFFF"/>
+      </g>
+      <path d="M26 336H334" stroke="#E7EEF1"/>
+
+      <text x="318" y="376" text-anchor="start" font-size="17" font-weight="500" fill="#173F5F">حسّن الخط</text>
+      <text x="318" y="399" text-anchor="start" font-size="13" fill="#78909C">استخدام خط Tajawal المضمّن</text>
+      <g transform="translate(27 363)">
+        <rect width="48" height="27" rx="13.5" fill="#D9E3E7"/>
+        <circle cx="13.5" cy="13.5" r="10" fill="#FFFFFF"/>
+      </g>
+
+      <rect x="26" y="440" width="308" height="74" rx="16" fill="#FFF8E6"/>
+      <circle cx="307" cy="467" r="11" fill="#FFD166"/>
+      <path d="M307 461v7M307 472h.01" stroke="#644A13" stroke-width="2.2" stroke-linecap="round"/>
+      <text x="283" y="465" text-anchor="start" font-size="13" fill="#6F571D">تُحفظ الخيارات لهذا الموقع فقط.</text>
+      <text x="283" y="488" text-anchor="start" font-size="12" fill="#8A7441">لا يغادر النص جهازك.</text>
+    </g>
+  </g>
+</svg>
