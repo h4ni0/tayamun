@@ -17,7 +17,7 @@ The extension is written in TypeScript and built with:
 - Node.js 24.16.0
 - npm 11.16.0
 - WXT 0.20.27
-- TypeScript 5.9.3
+- TypeScript 7.0.2
 - Vite 8.1.4, invoked by WXT for bundling and production minification
 
 WXT/Vite combine and process the TypeScript, JavaScript, and CSS files included in the final extension. No web template engine, custom code generator, proprietary build tool, or remote code is used.
