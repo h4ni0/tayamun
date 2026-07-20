@@ -105,27 +105,33 @@ function customPropertyFingerprint(cssText: string | null): string {
 
 function createDefaultScheduler(document: Document): TayamunWorkScheduler {
   const view = document.defaultView;
+  // One bounded slice per macrotask. MessageChannel yields to rendering and
+  // timers between slices without setTimeout clamping, and without the
+  // idle-period re-entry that starved Firefox timers under
+  // requestIdleCallback.
+  const Channel = view?.MessageChannel ?? globalThis.MessageChannel;
+  if (!Channel) {
+    return {
+      now: () => view?.performance.now() ?? performance.now(),
+      schedule(callback) {
+        const id = view?.setTimeout(callback, 16) ?? setTimeout(callback, 16);
+        return () => (view?.clearTimeout(id) ?? clearTimeout(id));
+      },
+    };
+  }
+  const channel = new Channel();
+  const queue: (() => void)[] = [];
+  channel.port1.onmessage = () => {
+    queue.shift()?.();
+  };
   return {
     now: () => view?.performance.now() ?? performance.now(),
     schedule(callback) {
-      // One bounded slice per macrotask. MessageChannel yields to rendering and
-      // timers between slices without setTimeout clamping, and without the
-      // idle-period re-entry that starved Firefox timers under
-      // requestIdleCallback.
-      const Channel = view?.MessageChannel ?? globalThis.MessageChannel;
-      if (!Channel) {
-        const id = view?.setTimeout(callback, 16) ?? setTimeout(callback, 16);
-        return () => (view?.clearTimeout(id) ?? clearTimeout(id));
-      }
-      const channel = new Channel();
-      let cancelled = false;
-      channel.port1.onmessage = () => {
-        if (!cancelled) callback();
-      };
+      queue.push(callback);
       channel.port2.postMessage(null);
       return () => {
-        cancelled = true;
-        channel.port1.onmessage = null;
+        const index = queue.indexOf(callback);
+        if (index >= 0) queue.splice(index, 1);
       };
     },
   };

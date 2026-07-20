@@ -223,46 +223,77 @@ function isForbiddenInput(element: Element): boolean {
 
 export function isExcluded(element: Element): boolean {
   const facts = factsFor(element);
-  facts.excluded ??= computeIsExcluded(element);
-  return facts.excluded;
-}
+  if (facts.excluded !== undefined) return facts.excluded;
 
-function computeIsExcluded(element: Element): boolean {
+  // Fold the result down the uncached ancestor segment so each element's
+  // exclusion is derived once per epoch instead of re-walking shared chains.
+  const chain: Element[] = [];
   let current: Element | null = element;
-  let depth = 0;
-  while (current && depth++ < MAX_ANCESTOR_DEPTH) {
-    if (EXCLUDED_TAGS.has(current.tagName) || isForbiddenInput(current)) return true;
-    if (current.matches(CODE_EDITOR_SELECTOR)) return true;
-    if (current.namespaceURI && current.namespaceURI !== 'http://www.w3.org/1999/xhtml') return true;
+  let excluded = false;
+  while (current) {
+    if (current !== element) {
+      const cached = elementFacts.get(current);
+      if (cached && cached.epoch === factsEpoch && cached.excluded !== undefined) {
+        excluded = cached.excluded;
+        break;
+      }
+    }
+    if (isSelfExcluded(current)) {
+      excluded = true;
+      factsFor(current).excluded = true;
+      break;
+    }
+    chain.push(current);
     current = composedParent(current);
   }
+  for (const item of chain) factsFor(item).excluded = excluded;
+  return excluded;
+}
 
-  return current !== null;
+function isSelfExcluded(element: Element): boolean {
+  if (EXCLUDED_TAGS.has(element.tagName) || isForbiddenInput(element)) return true;
+  if (element.matches(CODE_EDITOR_SELECTOR)) return true;
+  return Boolean(element.namespaceURI) && element.namespaceURI !== 'http://www.w3.org/1999/xhtml';
 }
 
 export function isDisplayed(element: Element): boolean {
   const facts = factsFor(element);
-  facts.displayed ??= computeIsDisplayed(element);
-  return facts.displayed;
-}
+  if (facts.displayed !== undefined) return facts.displayed;
 
-function computeIsDisplayed(element: Element): boolean {
+  const chain: Element[] = [];
   let current: Element | null = element;
-  let depth = 0;
-  while (current && depth++ < MAX_ANCESTOR_DEPTH) {
-    if (current.hasAttribute('hidden')) return false;
-
-    const style = current.ownerDocument.defaultView?.getComputedStyle(current);
-    if (style) {
-      if (style.display === 'none') return false;
-      if (style.visibility === 'hidden' || style.visibility === 'collapse') return false;
-      if (style.contentVisibility === 'hidden') return false;
-      if (Number.parseFloat(style.opacity) === 0) return false;
+  let displayed = true;
+  while (current) {
+    if (current !== element) {
+      const cached = elementFacts.get(current);
+      if (cached && cached.epoch === factsEpoch && cached.displayed !== undefined) {
+        displayed = cached.displayed;
+        break;
+      }
     }
+    if (!isSelfDisplayed(current)) {
+      displayed = false;
+      factsFor(current).displayed = false;
+      break;
+    }
+    chain.push(current);
     current = composedParent(current);
   }
+  for (const item of chain) factsFor(item).displayed = displayed;
+  return displayed;
+}
 
-  return current === null;
+function isSelfDisplayed(element: Element): boolean {
+  if (element.hasAttribute('hidden')) return false;
+
+  const style = element.ownerDocument.defaultView?.getComputedStyle(element);
+  if (style) {
+    if (style.display === 'none') return false;
+    if (style.visibility === 'hidden' || style.visibility === 'collapse') return false;
+    if (style.contentVisibility === 'hidden') return false;
+    if (Number.parseFloat(style.opacity) === 0) return false;
+  }
+  return true;
 }
 
 function classifyContainer(element: Element): 'inline' | 'safe' | 'layout' {
