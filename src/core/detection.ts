@@ -142,6 +142,34 @@ const MAX_DESCENDANT_ELEMENTS = 32;
 const MAX_TEXT_NODES = 64;
 const MAX_INSPECTED_CODE_POINTS = 8_192;
 
+interface ElementFacts {
+  epoch: number;
+  displayed?: boolean;
+  excluded?: boolean;
+  classification?: 'inline' | 'safe' | 'layout';
+}
+
+// Facts derived from computed styles are memoized per element within an epoch.
+// The engine bumps the epoch when mutations, stylesheet loads, or resizes may
+// have changed styles, so a full-page scan reads each element's style once
+// instead of once per descendant text node.
+let factsEpoch = 0;
+const elementFacts = new WeakMap<Element, ElementFacts>();
+
+/** Drops memoized computed-style facts. Called by the engine before rescanning. */
+export function invalidateDetectionCaches(): void {
+  factsEpoch += 1;
+}
+
+function factsFor(element: Element): ElementFacts {
+  let facts = elementFacts.get(element);
+  if (!facts || facts.epoch !== factsEpoch) {
+    facts = { epoch: factsEpoch };
+    elementFacts.set(element, facts);
+  }
+  return facts;
+}
+
 export function firstUnicodeLetterIsArabic(text: string): boolean {
   let inspected = 0;
   for (const character of text) {
@@ -194,6 +222,12 @@ function isForbiddenInput(element: Element): boolean {
 }
 
 export function isExcluded(element: Element): boolean {
+  const facts = factsFor(element);
+  facts.excluded ??= computeIsExcluded(element);
+  return facts.excluded;
+}
+
+function computeIsExcluded(element: Element): boolean {
   let current: Element | null = element;
   let depth = 0;
   while (current && depth++ < MAX_ANCESTOR_DEPTH) {
@@ -207,6 +241,12 @@ export function isExcluded(element: Element): boolean {
 }
 
 export function isDisplayed(element: Element): boolean {
+  const facts = factsFor(element);
+  facts.displayed ??= computeIsDisplayed(element);
+  return facts.displayed;
+}
+
+function computeIsDisplayed(element: Element): boolean {
   let current: Element | null = element;
   let depth = 0;
   while (current && depth++ < MAX_ANCESTOR_DEPTH) {
@@ -226,6 +266,12 @@ export function isDisplayed(element: Element): boolean {
 }
 
 function classifyContainer(element: Element): 'inline' | 'safe' | 'layout' {
+  const facts = factsFor(element);
+  facts.classification ??= computeClassification(element);
+  return facts.classification;
+}
+
+function computeClassification(element: Element): 'inline' | 'safe' | 'layout' {
   const display = computedDisplay(element);
   if (display === 'contents' || display === 'inline') return 'inline';
   if (LAYOUT_DISPLAYS.has(display) || display.includes('flex') || display.includes('grid')) return 'layout';

@@ -5,6 +5,7 @@ import {
   firstUnicodeLetterIsArabic,
   getContainerText,
   getTextFieldValue,
+  invalidateDetectionCaches,
   isDisplayed,
   isExcluded,
   isSafeTextContainer,
@@ -258,6 +259,8 @@ export class TayamunDirectionEngine {
     if (this.active) return;
     this.active = true;
     this.styles.discardPendingStyleMutations();
+    // Styles may have changed while observers were disconnected.
+    invalidateDetectionCaches();
     this.document.addEventListener('input', this.handleInput, true);
     this.document.addEventListener('change', this.handleInput, true);
     this.document.addEventListener('compositionend', this.handleInput, true);
@@ -294,6 +297,7 @@ export class TayamunDirectionEngine {
 
   private readonly handleResize = (): void => {
     if (!this.active) return;
+    invalidateDetectionCaches();
     this.debounceSubtree(this.document);
     this.armSubtreeDebounce();
   };
@@ -302,6 +306,8 @@ export class TayamunDirectionEngine {
     const target = event.target;
     if (!(target instanceof this.document.defaultView!.Element)) return;
     if (target.tagName !== 'LINK' && target.tagName !== 'STYLE') return;
+    // A newly loaded stylesheet can change computed styles page-wide.
+    invalidateDetectionCaches();
     const root = nodeRoot(target);
     if (root) this.enqueueSubtree(root);
   };
@@ -355,6 +361,8 @@ export class TayamunDirectionEngine {
 
   private processMutation(record: MutationRecord): void {
     if (record.type === 'childList') {
+      // Reparenting can move elements under differently styled ancestors.
+      invalidateDetectionCaches();
       const parent = record.target;
       const mutationRoot = nodeRoot(parent);
       if (mutationRoot?.nodeType === 11) {
@@ -393,6 +401,7 @@ export class TayamunDirectionEngine {
 
     if (record.attributeName === 'style') {
       if (this.styles.consumeOwnStyleMutation(target)) return;
+      invalidateDetectionCaches();
       if (this.styles.needsRepair(target)) this.enqueueStyleRepair(target);
       const currentStyle = target.getAttribute('style');
       if (relevantInlineStyle(record.oldValue) !== relevantInlineStyle(currentStyle)) {
@@ -404,11 +413,13 @@ export class TayamunDirectionEngine {
     }
 
     if (record.attributeName === 'class') {
+      invalidateDetectionCaches();
       this.enqueueAlignmentRefresh(target);
       this.debounceSubtree(target);
       return;
     }
 
+    invalidateDetectionCaches();
     if (
       record.attributeName === 'hidden' ||
       record.attributeName === 'dir' ||
