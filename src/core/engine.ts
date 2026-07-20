@@ -107,11 +107,25 @@ function createDefaultScheduler(document: Document): TayamunWorkScheduler {
   return {
     now: () => view?.performance.now() ?? performance.now(),
     schedule(callback) {
-      // At most one bounded slice per frame-sized macrotask. Re-scheduling from
-      // requestIdleCallback can run repeatedly in one idle period and starve
-      // Firefox timers despite each individual slice being short.
-      const id = view?.setTimeout(callback, 16) ?? setTimeout(callback, 16);
-      return () => (view?.clearTimeout(id) ?? clearTimeout(id));
+      // One bounded slice per macrotask. MessageChannel yields to rendering and
+      // timers between slices without setTimeout clamping, and without the
+      // idle-period re-entry that starved Firefox timers under
+      // requestIdleCallback.
+      const Channel = view?.MessageChannel ?? globalThis.MessageChannel;
+      if (!Channel) {
+        const id = view?.setTimeout(callback, 16) ?? setTimeout(callback, 16);
+        return () => (view?.clearTimeout(id) ?? clearTimeout(id));
+      }
+      const channel = new Channel();
+      let cancelled = false;
+      channel.port1.onmessage = () => {
+        if (!cancelled) callback();
+      };
+      channel.port2.postMessage(null);
+      return () => {
+        cancelled = true;
+        channel.port1.onmessage = null;
+      };
     },
   };
 }
