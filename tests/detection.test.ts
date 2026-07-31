@@ -1,6 +1,9 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
+  computedStyleFor,
   editingHostFor,
+  isDisplayed,
+  isExcluded,
   findTextContainer,
   getContainerText,
   isSafeTextContainer,
@@ -8,8 +11,21 @@ import {
 } from '../src/core/detection';
 
 afterEach(() => {
+  vi.restoreAllMocks();
   document.body.replaceChildren();
 });
+
+function appendNestedElements(depth: number): { root: HTMLElement; leaf: HTMLElement } {
+  const root = document.createElement('div');
+  let leaf = root;
+  for (let index = 1; index < depth; index += 1) {
+    const child = document.createElement('div');
+    leaf.append(child);
+    leaf = child;
+  }
+  document.body.append(root);
+  return { root, leaf };
+}
 
 describe('textShouldUseRtl', () => {
   it('accepts substantial mixed-language text', () => {
@@ -251,5 +267,77 @@ describe('editing hosts', () => {
 
     expect(editingHostFor(prose)).toBeNull();
     expect(findTextContainer(prose.firstChild as Text)).toBe(prose);
+  });
+});
+
+describe('bounded ancestor folds', () => {
+  it('conservatively stops every cold walk at the ancestor cap and reuses its cached suffix', () => {
+    const { leaf } = appendNestedElements(256);
+    const sibling = document.createElement('div');
+    leaf.parentElement!.append(sibling);
+
+    const styleReads = vi.spyOn(window, 'getComputedStyle');
+    expect(isDisplayed(leaf)).toBe(false);
+    expect(styleReads).toHaveBeenCalledTimes(64);
+    styleReads.mockClear();
+    expect(isDisplayed(sibling)).toBe(false);
+    expect(styleReads).toHaveBeenCalledTimes(1);
+    styleReads.mockRestore();
+
+    const selectorMatches = vi.spyOn(Element.prototype, 'matches');
+    expect(isExcluded(leaf)).toBe(true);
+    expect(selectorMatches).toHaveBeenCalledTimes(64);
+    selectorMatches.mockClear();
+    expect(isExcluded(sibling)).toBe(true);
+    expect(selectorMatches).toHaveBeenCalledTimes(1);
+    selectorMatches.mockRestore();
+
+    const attributeReads = vi.spyOn(Element.prototype, 'getAttribute');
+    expect(editingHostFor(leaf)).toBeNull();
+    expect(attributeReads).toHaveBeenCalledTimes(64);
+    attributeReads.mockClear();
+    expect(editingHostFor(sibling)).toBeNull();
+    expect(attributeReads).toHaveBeenCalledTimes(2);
+
+    expect(isSafeTextContainer(leaf)).toBe(false);
+    expect(isSafeTextContainer(sibling)).toBe(false);
+  });
+
+  it('still resolves ordinary visibility, exclusions, and editing hosts within the cap', () => {
+    // These elements plus BODY and HTML fill the 64-element walk. Shared
+    // document-node facts may already be cached by earlier cases in this file.
+    const { root, leaf } = appendNestedElements(62);
+    root.setAttribute('contenteditable', 'true');
+
+    const styleReads = vi.spyOn(window, 'getComputedStyle');
+    expect(isDisplayed(leaf)).toBe(true);
+    expect(styleReads.mock.calls.length).toBeLessThanOrEqual(64);
+    expect(styleReads.mock.calls.length).toBeGreaterThan(0);
+    styleReads.mockRestore();
+
+    const selectorMatches = vi.spyOn(Element.prototype, 'matches');
+    expect(isExcluded(leaf)).toBe(false);
+    expect(selectorMatches.mock.calls.length).toBeLessThanOrEqual(64);
+    expect(selectorMatches.mock.calls.length).toBeGreaterThan(0);
+    selectorMatches.mockRestore();
+
+    const attributeReads = vi.spyOn(Element.prototype, 'getAttribute');
+    expect(editingHostFor(leaf)).toBe(root);
+    expect(attributeReads.mock.calls.length).toBeLessThanOrEqual(64);
+    expect(attributeReads.mock.calls.length).toBeGreaterThan(0);
+  });
+});
+
+describe('detection fact epochs', () => {
+  it('memoizes repeated computed-style reads within the same epoch', () => {
+    const target = document.createElement('div');
+    document.body.append(target);
+    const styleReads = vi.spyOn(window, 'getComputedStyle');
+
+    const first = computedStyleFor(target);
+    const second = computedStyleFor(target);
+
+    expect(second).toBe(first);
+    expect(styleReads).toHaveBeenCalledTimes(1);
   });
 });

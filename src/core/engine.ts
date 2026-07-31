@@ -24,11 +24,19 @@ interface WorkJob {
   cancel?(): void;
 }
 
+interface TargetJob extends WorkJob {
+  refreshAffectedAlignment: boolean;
+}
+
 interface SubtreeJob extends WorkJob {
   root: Node;
   cancelled: boolean;
   rerun: boolean;
-  followUps: Set<Node>;
+  refreshAffectedAlignment: boolean;
+  followUps: Map<Node, boolean>;
+  invalidateIntrinsicFacts: boolean;
+  rerunWithIntrinsicInvalidation: boolean;
+  intrinsicInvalidationFollowUps: Set<Node>;
 }
 
 interface DebouncedSubtree {
@@ -36,7 +44,9 @@ interface DebouncedSubtree {
   deadline: number;
   delayMs: number;
   quietRescans: number;
-  changesAtLastRescan: number;
+  refreshAffectedAlignment: boolean;
+  refreshRootAlignment: boolean;
+  waitForQuiet: boolean;
 }
 
 export interface TayamunWorkScheduler {
@@ -55,6 +65,7 @@ const ELEMENT_OR_TEXT = 1 | 4;
 const DEFAULT_SLICE_BUDGET_MS = 4;
 const DEFAULT_MAX_STEPS_PER_SLICE = 100;
 const DEFAULT_CLASS_DEBOUNCE_MS = 150;
+const MAX_ANCESTOR_DEPTH = 64;
 // A page that keeps rewriting classes must not postpone its rescan forever: the
 // dirty set would grow without bound and a real change would never be observed.
 const SUBTREE_DEBOUNCE_MAX_WAIT_FACTOR = 4;
@@ -65,6 +76,7 @@ const QUIET_RESCANS_BEFORE_BACKOFF = 2;
 const MAX_SUBTREE_DEBOUNCE_MS = 1_200;
 const AFFECTED_ATTRIBUTE = 'data-tayamun-affected-q7m3';
 const FONT_ATTRIBUTE = 'data-tayamun-font-q7m3';
+const MAX_EDITOR_MIGRATION_NODES = 512;
 // Mirrors src/core/content.css, which does not reach inside a shadow root.
 const SHADOW_FONT_CSS = `[${AFFECTED_ATTRIBUTE}] { direction: rtl !important; unicode-bidi: isolate !important; } li[${AFFECTED_ATTRIBUTE}], summary[${AFFECTED_ATTRIBUTE}] { list-style-position: inside !important; } [${FONT_ATTRIBUTE}] { font-family: "Tajawal Tayamun", Tajawal, sans-serif !important; }`;
 const VISIBILITY_STYLE_PROPERTIES = new Set([
@@ -74,6 +86,7 @@ const VISIBILITY_STYLE_PROPERTIES = new Set([
   'opacity',
   'direction',
   'unicode-bidi',
+  'text-align',
 ]);
 
 function nodeRoot(node: Node): ObservableRoot | null {
@@ -100,6 +113,7 @@ function relevantInlineStyle(cssText: string | null): string {
     if (property === 'content-visibility') fingerprints.add(`content-visibility:${value}`);
     if (property === 'direction') fingerprints.add(`direction:${value}`);
     if (property === 'unicode-bidi') fingerprints.add(`unicode-bidi:${value}`);
+    if (property === 'text-align') fingerprints.add(`text-align:${value}`);
     if (property === 'opacity' && Number.parseFloat(value) === 0) {
       fingerprints.add('opacity:hidden');
     }
@@ -162,12 +176,16 @@ export class TayamunDirectionEngine {
   private readonly styles = new OwnedStyles();
   private readonly affected = new Set<HTMLElement>();
   private readonly observers = new Map<ObservableRoot, MutationObserver>();
-  private readonly trackedCustomElements = new WeakSet<Element>();
+  private readonly trackedCustomElements = new Set<Element>();
   private readonly jobs: WorkJob[] = [];
   private readonly reconcileQueued = new Set<HTMLElement>();
-  private readonly targetJobs = new Map<Node, WorkJob>();
+  private readonly targetJobs = new Map<Node, TargetJob>();
   private readonly subtreeJobs = new Map<Node, SubtreeJob>();
   private readonly removedJobs = new Map<Node, WorkJob>();
+  private readonly editorMutationJobs = new Set<WorkJob>();
+  private independentEditorFields = new WeakMap<HTMLElement, Set<HTMLElement>>();
+  private independentEditorOwners = new WeakMap<HTMLElement, Set<HTMLElement>>();
+  private readonly independentRefreshQueued = new Set<HTMLElement>();
   private readonly styleRepairQueued = new Set<HTMLElement>();
   private readonly alignmentRefreshQueued = new Set<HTMLElement>();
   private debouncedSubtrees = new Set<Node>();
@@ -175,6 +193,7 @@ export class TayamunDirectionEngine {
   private subtreeDebounceTimer: ReturnType<typeof setTimeout> | undefined;
   private subtreeDebounceFlushActive = false;
   private earliestSubtreeDueAt = 0;
+  private readonly pendingDebounceRescans = new WeakMap<Node, DebouncedSubtree>();
   private readonly markedAffected = new WeakSet<HTMLElement>();
   private readonly markedFont = new WeakSet<HTMLElement>();
   private readonly shadowFontStyles = new Map<ShadowRoot, HTMLStyleElement>();
@@ -189,7 +208,6 @@ export class TayamunDirectionEngine {
   private fontRestyleJob: WorkJob | undefined;
   private alignmentRevision = 0;
   private fontRevision = 0;
-  private appliedChanges = 0;
   private started = false;
   private active = false;
   private runningSynchronously = false;
@@ -298,7 +316,7 @@ export class TayamunDirectionEngine {
     this.document.addEventListener('compositionend', this.handleInput, true);
     this.document.addEventListener('load', this.handleLoad, true);
     this.document.defaultView?.addEventListener('resize', this.handleResize, { passive: true });
-    this.observeRoot(this.document);
+    this.observeRoot(this.document, true);
   }
 
   private deactivateAndRestore(): void {
@@ -324,13 +342,16 @@ export class TayamunDirectionEngine {
 
   private readonly handleInput = (event: Event): void => {
     const source = event.composedPath?.()[0] ?? event.target;
-    if (source && 'nodeType' in source) this.enqueueTarget(source as Node);
+    // Focus pseudo-classes and CSSOM edits can change classification without a
+    // DOM mutation. Input reconciliation must therefore start a style epoch.
+    invalidateDetectionCaches();
+    if (source && 'nodeType' in source) this.enqueueTarget(source as Node, true);
   };
 
   private readonly handleResize = (): void => {
     if (!this.active) return;
     invalidateDetectionCaches();
-    this.debounceSubtree(this.document);
+    this.debounceSubtree(this.document, true);
     this.armSubtreeDebounce();
   };
 
@@ -341,10 +362,10 @@ export class TayamunDirectionEngine {
     // A newly loaded stylesheet can change computed styles page-wide.
     invalidateDetectionCaches();
     const root = nodeRoot(target);
-    if (root) this.enqueueSubtree(root);
+    if (root) this.enqueueSubtree(root, true);
   };
 
-  private observeRoot(root: ObservableRoot): void {
+  private observeRoot(root: ObservableRoot, refreshAffectedAlignment = false): void {
     if (!this.active || this.observers.has(root)) return;
     if (root.nodeType === 11) this.ensureShadowFontStyle(root as ShadowRoot);
     const MutationObserverConstructor = this.document.defaultView?.MutationObserver;
@@ -378,7 +399,7 @@ export class TayamunDirectionEngine {
       ],
     });
     this.observers.set(root, observer);
-    this.enqueueSubtree(root);
+    this.enqueueSubtree(root, refreshAffectedAlignment);
   }
 
   private handleMutations(records: MutationRecord[]): void {
@@ -398,10 +419,37 @@ export class TayamunDirectionEngine {
 
   private processMutation(record: MutationRecord): void {
     const source = record.target;
+    // Text is often the first observed event after a focus pseudo-class or a
+    // CSSOM-only style change, neither of which produces an attribute record.
+    if (record.type === 'characterData') invalidateDetectionCaches();
     const sourceElement = source.nodeType === 1 ? (source as Element) : source.parentElement;
     const attributeName = record.attributeName ?? '';
-    let host = sourceElement ? editingHostFor(sourceElement) : null;
-    if (host && (record.type !== 'attributes' || source !== host)) {
+    const previousHost = sourceElement ? editingHostFor(sourceElement) : null;
+    if (record.type === 'attributes' && attributeName === 'contenteditable') {
+      const element = source as Element;
+      if (isUnchangedAttribute(element, attributeName, record.oldValue)) return;
+      invalidateElementFacts(element);
+      invalidateDetectionCaches();
+
+      // Editable topology changes are rare and can change ownership for every
+      // nested host. Migrate this bounded subtree so newly independent hosts are
+      // found and previously independent, affected hosts are restored.
+      this.enqueueSubtree(element);
+      if (previousHost) this.enqueueReconcile(previousHost);
+      const currentHost = editingHostFor(element);
+      if (currentHost) this.enqueueReconcile(currentHost);
+      return;
+    }
+
+    const host = sourceElement ? editingHostFor(sourceElement) : null;
+    const sourceHTMLElement =
+      sourceElement instanceof this.document.defaultView!.HTMLElement ? sourceElement : null;
+    const sourceIsIndependent =
+      sourceHTMLElement !== null &&
+      (sourceHTMLElement.tagName === 'INPUT' ||
+        sourceHTMLElement.tagName === 'TEXTAREA' ||
+        (record.type === 'attributes' && this.affected.has(sourceHTMLElement)));
+    if (host && !sourceIsIndependent && (record.type !== 'attributes' || source !== host)) {
       // Editor-internal writes never need a descendant scan, but topology,
       // visibility, and exclusions used while reading the host's text must be
       // current. Otherwise a hidden leading run or a moved editor block keeps
@@ -415,10 +463,13 @@ export class TayamunDirectionEngine {
           invalidateElementFacts(element);
         }
         invalidateDetectionCaches();
-        if (attributeName === 'contenteditable') host = editingHostFor(element);
       }
       if (host && (record.type !== 'attributes' || source !== host)) {
         this.enqueueReconcile(host);
+        if (record.type === 'childList') {
+          this.enqueueEditorTraversal(record.addedNodes, false);
+          this.enqueueEditorTraversal(record.removedNodes, true);
+        }
         return;
       }
     }
@@ -439,20 +490,20 @@ export class TayamunDirectionEngine {
         ((parent as Element).tagName === 'STYLE' || (parent as Element).tagName === 'LINK')
       ) {
         const root = nodeRoot(parent);
-        if (root) this.debounceSubtree(root);
+        if (root) this.debounceSubtree(root, true);
         return;
       }
 
       // A child change can alter the parent's own text, but must not rescan
       // the parent's entire existing subtree.
       this.enqueueTarget(parent);
-      this.enqueueNodeBatch(record.addedNodes, (node) => this.enqueueSubtree(node));
+      this.enqueueNodeBatch(record.addedNodes, (node) => this.enqueueSubtree(node, false, true));
       this.enqueueNodeBatch(record.removedNodes, (node) => this.enqueueRemoved(node));
       return;
     }
 
     if (record.type === 'characterData') {
-      this.enqueueTarget(record.target);
+      this.enqueueTarget(record.target, true);
       return;
     }
 
@@ -474,30 +525,52 @@ export class TayamunDirectionEngine {
     if (attributeName === 'style') {
       if (this.styles.consumeOwnStyleMutation(target)) return;
       if (this.styles.needsRepair(target)) this.enqueueStyleRepair(target);
-      if (this.affected.has(target)) this.enqueueAlignmentRefresh(target);
       const currentStyle = target.getAttribute('style');
       if (record.oldValue === currentStyle) return;
+      const relevantStyleChanged =
+        relevantInlineStyle(record.oldValue) !== relevantInlineStyle(currentStyle);
+      const customPropertiesChanged =
+        customPropertyFingerprint(record.oldValue) !== customPropertyFingerprint(currentStyle);
+      if (this.affected.has(target) && relevantStyleChanged) {
+        this.enqueueAlignmentRefresh(target);
+      }
       invalidateDetectionCaches();
       const targetIsEditingHost = editingHostFor(target) === target;
-      if (relevantInlineStyle(record.oldValue) !== relevantInlineStyle(currentStyle)) {
+      if (relevantStyleChanged) {
         if (targetIsEditingHost) this.enqueueReconcile(target);
-        else this.enqueueSubtree(target);
-      } else if (customPropertyFingerprint(record.oldValue) !== customPropertyFingerprint(currentStyle)) {
-        if (targetIsEditingHost) this.enqueueReconcile(target);
-        else this.debounceSubtree(target);
+        if (targetIsEditingHost) this.enqueueIndependentEditorRefresh(target);
+        else this.enqueueSubtree(target, true);
+      } else if (customPropertiesChanged) {
+        this.debounceSubtree(target, true, true, targetIsEditingHost);
       }
       return;
     }
 
     if (attributeName === 'class') {
       invalidateDetectionCaches();
-      this.enqueueAlignmentRefresh(target);
+      if (this.styles.needsClassAlignmentRefresh(target)) {
+        this.enqueueAlignmentRefresh(target);
+      }
       if (editingHostFor(target) === target) this.enqueueReconcile(target);
-      else this.debounceSubtree(target);
+      if (editingHostFor(target) === target) this.enqueueIndependentEditorRefresh(target);
+      else this.debounceSubtree(target, true);
       return;
     }
 
+    if (
+      attributeName === 'role' ||
+      attributeName === 'aria-hidden' ||
+      attributeName === 'data-code-editor' ||
+      attributeName === 'data-language' ||
+      attributeName === 'data-mode'
+    ) {
+      invalidateAllElementFacts();
+    }
     invalidateDetectionCaches();
+    if (attributeName === 'dir') {
+      if (this.affected.has(target)) this.enqueueAlignmentRefresh(target);
+      if (editingHostFor(target) === target) this.enqueueIndependentEditorRefresh(target);
+    }
     if (
       attributeName === 'hidden' ||
       attributeName === 'dir' ||
@@ -511,15 +584,21 @@ export class TayamunDirectionEngine {
     ) {
       if (attributeName !== 'contenteditable' && editingHostFor(target) === target) {
         this.enqueueReconcile(target);
+        this.enqueueIndependentEditorRefresh(target);
       } else {
-        this.enqueueSubtree(target);
+        this.enqueueSubtree(target, attributeName === 'dir');
       }
     } else {
       this.enqueueTarget(target);
     }
   }
 
-  private debounceSubtree(target: Node): void {
+  private debounceSubtree(
+    target: Node,
+    refreshAffectedAlignment = false,
+    refreshRootAlignment = false,
+    waitForQuiet = false,
+  ): void {
     if (!nodeRoot(target)) return;
     let state = this.debounceStates.get(target);
     if (!state) {
@@ -528,16 +607,26 @@ export class TayamunDirectionEngine {
         deadline: 0,
         delayMs: this.classMutationDebounceMs,
         quietRescans: 0,
-        changesAtLastRescan: -1,
+        refreshAffectedAlignment: false,
+        refreshRootAlignment: false,
+        waitForQuiet: false,
       };
       this.debounceStates.set(target, state);
     }
+    if (refreshAffectedAlignment) state.refreshAffectedAlignment = true;
+    if (refreshRootAlignment) state.refreshRootAlignment = true;
+    state.waitForQuiet = waitForQuiet;
 
     const now = this.scheduler.now();
-    if (state.deadline === 0) {
-      state.deadline = now + state.delayMs * SUBTREE_DEBOUNCE_MAX_WAIT_FACTOR;
+    if (state.waitForQuiet) {
+      state.deadline = 0;
+      state.dueAt = now + state.delayMs;
+    } else {
+      if (state.deadline === 0) {
+        state.deadline = now + state.delayMs * SUBTREE_DEBOUNCE_MAX_WAIT_FACTOR;
+      }
+      state.dueAt = Math.min(now + state.delayMs, state.deadline);
     }
-    state.dueAt = Math.min(now + state.delayMs, state.deadline);
     this.debouncedSubtrees.add(target);
     if (this.earliestSubtreeDueAt === 0 || state.dueAt < this.earliestSubtreeDueAt) {
       this.earliestSubtreeDueAt = state.dueAt;
@@ -591,20 +680,50 @@ export class TayamunDirectionEngine {
           return false;
         }
 
-        this.adjustRescanDelay(state);
-        if (node.isConnected) this.enqueueSubtree(node);
+        const refreshAffectedAlignment = state.refreshAffectedAlignment;
+        const refreshRootAlignment = state.refreshRootAlignment;
+        state.refreshAffectedAlignment = false;
+        state.refreshRootAlignment = false;
+        state.waitForQuiet = false;
+        state.deadline = 0;
+        if (node.isConnected) {
+          if (
+            refreshRootAlignment &&
+            node instanceof this.document.defaultView!.HTMLElement &&
+            this.styles.needsClassAlignmentRefresh(node)
+          ) {
+            this.enqueueAlignmentRefresh(node);
+          }
+          if (
+            node instanceof this.document.defaultView!.HTMLElement &&
+            editingHostFor(node) === node
+          ) {
+            const wasAffected = this.affected.has(node);
+            this.enqueueReconcile(node);
+            this.enqueueIndependentEditorRefresh(node);
+            this.enqueueJob({
+              step: () => {
+                this.adjustRescanDelay(state, this.affected.has(node) !== wasAffected);
+                return true;
+              },
+            });
+          } else {
+            this.pendingDebounceRescans.set(node, state);
+            this.enqueueSubtree(node, refreshAffectedAlignment);
+          }
+        }
         return false;
       },
     });
   }
 
   /**
-   * Grows a subtree's debounce while its rescans keep producing the same result,
-   * and restores the base delay as soon as one changes something. Backoff is per
-   * subtree, so an animated region cannot delay unrelated content.
+   * Grows a subtree's debounce only after its own scan leaves every candidate's
+   * affected membership unchanged. Work in disjoint subtrees cannot keep a
+   * cosmetic animation at the base scan rate.
    */
-  private adjustRescanDelay(state: DebouncedSubtree): void {
-    if (state.changesAtLastRescan === this.appliedChanges) {
+  private adjustRescanDelay(state: DebouncedSubtree, membershipChanged: boolean): void {
+    if (!membershipChanged) {
       state.quietRescans += 1;
       if (state.quietRescans > QUIET_RESCANS_BEFORE_BACKOFF) {
         state.delayMs = Math.min(state.delayMs * 2, MAX_SUBTREE_DEBOUNCE_MS);
@@ -613,8 +732,6 @@ export class TayamunDirectionEngine {
       state.quietRescans = 0;
       state.delayMs = this.classMutationDebounceMs;
     }
-    state.changesAtLastRescan = this.appliedChanges;
-    state.deadline = 0;
   }
 
   private enqueueShadowStyleRepair(root: ShadowRoot): void {
@@ -682,12 +799,153 @@ export class TayamunDirectionEngine {
     });
   }
 
-  private enqueueTarget(node: Node): void {
-    if (!this.active || this.targetJobs.has(node)) return;
+  private enqueueEditorTraversal(roots: NodeList, removing: boolean): void {
+    if (roots.length === 0) return;
+
+    let rootIndex = 0;
+    let extraRootIndex = 0;
+    let visited = 0;
+    const extraRoots: Node[] = [];
+    const frames: Array<{ node: Node; entered: boolean; childIndex: number }> = [];
+    let activeRoot: Node | null = null;
+    const nextRoot = (): Node | null => roots[rootIndex++] ?? extraRoots[extraRootIndex++] ?? null;
+
+    const job: WorkJob = {
+      step: () => {
+        if (!this.active) {
+          this.editorMutationJobs.delete(job);
+          return true;
+        }
+        if (!removing && visited >= MAX_EDITOR_MIGRATION_NODES) {
+          visited = 0;
+          return false;
+        }
+
+        if (
+          activeRoot &&
+          ((removing && activeRoot.isConnected) || (!removing && !activeRoot.isConnected))
+        ) {
+          frames.length = 0;
+          activeRoot = null;
+          return false;
+        }
+
+        const frame = frames.at(-1);
+        if (!frame) {
+          const root = nextRoot();
+          if (!root) {
+            this.editorMutationJobs.delete(job);
+            return true;
+          }
+          if ((removing && root.isConnected) || (!removing && !root.isConnected)) return false;
+          activeRoot = root;
+          frames.push({ node: root, entered: false, childIndex: 0 });
+          return false;
+        }
+
+        if (!frame.entered) {
+          frame.entered = true;
+          visited += 1;
+          this.processEditorMutationNode(frame.node, removing, (root) => {
+            extraRoots.push(root);
+          });
+          return false;
+        }
+
+        const parent =
+          frame.node.nodeType === 1 || frame.node.nodeType === 9 || frame.node.nodeType === 11
+            ? (frame.node as ParentNode)
+            : null;
+        const child = parent?.children.item(frame.childIndex++) ?? null;
+        if (child) {
+          frames.push({ node: child, entered: false, childIndex: 0 });
+        } else {
+          frames.pop();
+          if (frames.length === 0) activeRoot = null;
+        }
+        return false;
+      },
+    };
+    this.editorMutationJobs.add(job);
+    this.enqueueJob(job);
+  }
+
+  private processEditorMutationNode(
+    node: Node,
+    removing: boolean,
+    enqueueRemovedRoot: (root: Node) => void,
+  ): void {
+    if (node.nodeType !== 1) return;
+    const element = node as Element;
+    // This element may have changed while detached and unobserved. Refresh each
+    // lazily visited wrapper before a descendant reuses its exclusion facts.
+    invalidateElementFacts(element);
+
+    if (removing) {
+      if (element instanceof this.document.defaultView!.HTMLElement) {
+        this.forgetIndependentEditorField(element);
+        if (this.affected.has(element)) this.restore(element);
+      }
+      if (element.shadowRoot) {
+        this.observers.get(element.shadowRoot)?.disconnect();
+        this.observers.delete(element.shadowRoot);
+        this.removeShadowFontStyle(element.shadowRoot);
+        enqueueRemovedRoot(element.shadowRoot);
+      }
+      return;
+    }
+
+    if (element.shadowRoot) this.registerOpenShadowRoot(element.shadowRoot);
+    this.trackCustomElement(element);
+    if (
+      element.tagName !== 'INPUT' &&
+      element.tagName !== 'TEXTAREA' &&
+      !element.hasAttribute('contenteditable') &&
+      !(element instanceof this.document.defaultView!.HTMLElement && this.affected.has(element))
+    ) {
+      return;
+    }
+
+    if (!(element instanceof this.document.defaultView!.HTMLElement)) return;
+    if (
+      isTextField(element) ||
+      this.affected.has(element) ||
+      editingHostFor(element) === element
+    ) {
+      this.enqueueReconcile(element);
+    }
+  }
+  private enqueueTarget(node: Node, refreshAffectedAlignment = false): void {
+    if (!this.active) return;
+    const existing = this.targetJobs.get(node);
+    if (existing) {
+      if (refreshAffectedAlignment) existing.refreshAffectedAlignment = true;
+      return;
+    }
+
+    // Native text controls remain independent fields even when embedded in a
+    // rich editor. Routing them through the host loses their live value.
+    const element = node.nodeType === 1 ? (node as Element) : node.parentElement;
+    if (
+      element instanceof this.document.defaultView!.HTMLElement &&
+      (element.tagName === 'INPUT' ||
+        element.tagName === 'TEXTAREA' ||
+        isTextField(element) ||
+        this.affected.has(element))
+    ) {
+      if (
+        refreshAffectedAlignment &&
+        this.affected.has(element) &&
+        editingHostFor(element) !== element
+      ) {
+        this.enqueueAlignmentRefresh(element);
+      }
+      this.enqueueReconcile(element);
+      return;
+    }
 
     // One reconcile of the host covers every text node the editor just rewrote,
     // and skips walking children the editor re-creates on each keystroke.
-    const element = node.nodeType === 1 ? (node as Element) : node.parentElement;
     const host = element ? editingHostFor(element) : null;
     if (host) {
       this.enqueueReconcile(host);
@@ -696,7 +954,9 @@ export class TayamunDirectionEngine {
     const candidates = new Set<HTMLElement>();
     let childIndex = 0;
     let initialized = false;
-    const job: WorkJob = {
+    let ancestor: Element | null | undefined;
+    const job: TargetJob = {
+      refreshAffectedAlignment,
       step: () => {
         if (!this.active || !node.isConnected) {
           this.targetJobs.delete(node);
@@ -708,6 +968,7 @@ export class TayamunDirectionEngine {
           if (node.nodeType === 3) {
             const candidate = findTextContainer(node as Text);
             if (candidate) candidates.add(candidate);
+            ancestor = (node as Text).parentElement;
           } else if (node.nodeType === 1) {
             const element = node as Element;
             if (isTextField(element)) candidates.add(element as HTMLElement);
@@ -718,17 +979,18 @@ export class TayamunDirectionEngine {
               candidates.add(element as HTMLElement);
             }
 
-            let ancestor = composedParent(element);
-            while (ancestor) {
-              if (
-                ancestor instanceof this.document.defaultView!.HTMLElement &&
-                this.affected.has(ancestor as HTMLElement)
-              ) {
-                candidates.add(ancestor as HTMLElement);
-              }
-              ancestor = composedParent(ancestor);
-            }
+            ancestor = composedParent(element);
           }
+        }
+        if (ancestor) {
+          if (
+            ancestor instanceof this.document.defaultView!.HTMLElement &&
+            this.affected.has(ancestor as HTMLElement)
+          ) {
+            candidates.add(ancestor as HTMLElement);
+          }
+          ancestor = composedParent(ancestor);
+          return false;
         }
 
         if (node.nodeType === 1) {
@@ -742,6 +1004,16 @@ export class TayamunDirectionEngine {
             return false;
           }
         }
+        if (job.refreshAffectedAlignment) {
+          for (const candidate of candidates) {
+            if (
+              this.affected.has(candidate) &&
+              editingHostFor(candidate) !== candidate
+            ) {
+              this.enqueueAlignmentRefresh(candidate);
+            }
+          }
+        }
 
         for (const candidate of candidates) this.enqueueReconcile(candidate);
         this.targetJobs.delete(node);
@@ -752,40 +1024,79 @@ export class TayamunDirectionEngine {
     this.enqueueJob(job);
   }
 
-  private enqueueSubtree(root: Node): void {
+  private enqueueSubtree(
+    root: Node,
+    refreshAffectedAlignment = false,
+    invalidateIntrinsicFacts = false,
+  ): void {
     if (!this.active) return;
+    // A raced reinsertion may still be under sliced removal cleanup. Check it
+    // together with queued-ancestor coalescing in one bounded parent walk.
+    if (this.removedJobs.has(root)) return;
     const existing = this.subtreeJobs.get(root);
     if (existing) {
+      if (refreshAffectedAlignment) existing.refreshAffectedAlignment = true;
+      if (invalidateIntrinsicFacts) existing.rerunWithIntrinsicInvalidation = true;
       existing.rerun = true;
       return;
     }
 
-    // Find a queued ancestor by walking the DOM, rather than comparing against
-    // every queued sibling. Bulk fragment inserts can contain thousands of
-    // siblings, and pairwise containment checks would make the observer O(N²).
+    // Parent coalescing prevents O(N²) sibling comparisons. Very deep trees get
+    // an independent invalidating job instead: duplicate work is safer than
+    // either blocking cleanup or trusting facts beyond the bounded prefix.
     let ancestor = root.parentNode;
-    while (ancestor) {
+    let remainingDepth = MAX_ANCESTOR_DEPTH;
+    while (ancestor && remainingDepth > 0) {
+      remainingDepth -= 1;
+      if (this.removedJobs.has(ancestor)) return;
       const queuedAncestor = this.subtreeJobs.get(ancestor);
       if (queuedAncestor) {
-        this.addSubtreeFollowUp(queuedAncestor, root);
+        this.addSubtreeFollowUp(
+          queuedAncestor,
+          root,
+          refreshAffectedAlignment,
+          invalidateIntrinsicFacts,
+        );
         return;
+      }
+      if (remainingDepth === 0) {
+        invalidateIntrinsicFacts = true;
+        break;
       }
       ancestor = ancestor.parentNode;
     }
+    const debounceState = this.pendingDebounceRescans.get(root);
+    this.pendingDebounceRescans.delete(root);
+
 
     let walker: TreeWalker | undefined;
     let current: Node | null | undefined;
+    let reconciledCandidate: HTMLElement | undefined;
+    let candidateWasAffected = false;
+    let membershipChanged = false;
     const candidates = new Set<HTMLElement>();
     const job: SubtreeJob = {
       root,
       cancelled: false,
       rerun: false,
-      followUps: new Set(),
+      refreshAffectedAlignment,
+      invalidateIntrinsicFacts,
+      rerunWithIntrinsicInvalidation: false,
+      intrinsicInvalidationFollowUps: new Set(),
+      followUps: new Map(),
       step: () => {
         if (job.cancelled || !this.active) {
           this.finishSubtreeJob(job);
           return true;
         }
+        if (
+          reconciledCandidate &&
+          this.affected.has(reconciledCandidate) !== candidateWasAffected
+        ) {
+          membershipChanged = true;
+        }
+        reconciledCandidate = undefined;
+
 
         if (current === undefined) {
           const ownerDocument = root.nodeType === 9 ? (root as Document) : root.ownerDocument;
@@ -801,15 +1112,29 @@ export class TayamunDirectionEngine {
         }
 
         if (current) {
-          const candidate = this.collectNodeCandidate(current);
+          if (job.invalidateIntrinsicFacts && current.nodeType === 1) {
+            invalidateElementFacts(current as Element);
+          }
+          const candidate = this.collectNodeCandidate(current, job.refreshAffectedAlignment);
           if (candidate && !candidates.has(candidate)) {
             candidates.add(candidate);
+            reconciledCandidate = candidate;
+            candidateWasAffected = this.affected.has(candidate);
+            if (
+              job.refreshAffectedAlignment &&
+              current !== root &&
+              this.affected.has(candidate) &&
+              this.styles.needsClassAlignmentRefresh(candidate)
+            ) {
+              this.enqueueAlignmentRefresh(candidate);
+            }
             this.enqueueReconcile(candidate);
           }
           current = walker?.nextNode() ?? null;
           return false;
         }
 
+        if (debounceState) this.adjustRescanDelay(debounceState, membershipChanged);
         this.finishSubtreeJob(job);
         return true;
       },
@@ -818,38 +1143,61 @@ export class TayamunDirectionEngine {
     this.enqueueJob(job);
   }
 
-  private addSubtreeFollowUp(job: SubtreeJob, root: Node): void {
-    // Set insertion is intentionally O(1). Parent/child duplicates are harmless
+  private addSubtreeFollowUp(
+    job: SubtreeJob,
+    root: Node,
+    refreshAffectedAlignment: boolean,
+    invalidateIntrinsicFacts: boolean,
+  ): void {
+    // Map insertion is intentionally O(1). Parent/child duplicates are harmless
     // bounded jobs; pairwise normalization makes bulk sibling insertion O(N²).
-    job.followUps.add(root);
+    job.followUps.set(root, job.followUps.get(root) === true || refreshAffectedAlignment);
+    if (invalidateIntrinsicFacts) job.intrinsicInvalidationFollowUps.add(root);
   }
 
   private finishSubtreeJob(job: SubtreeJob): void {
     if (this.subtreeJobs.get(job.root) === job) this.subtreeJobs.delete(job.root);
     if (job.cancelled || !this.active) return;
     if (job.rerun && job.root.isConnected) {
-      this.enqueueSubtree(job.root);
+      this.enqueueSubtree(
+        job.root,
+        job.refreshAffectedAlignment,
+        job.rerunWithIntrinsicInvalidation,
+      );
       return;
     }
     if (job.followUps.size > 0) {
-      const iterator = job.followUps.values();
+      const iterator = job.followUps.entries();
       this.enqueueJob({
         step: () => {
           const next = iterator.next();
           if (next.done) return true;
-          if (next.value.isConnected) this.enqueueSubtree(next.value);
+          const [root, refreshAffectedAlignment] = next.value;
+          if (root.isConnected) {
+            this.enqueueSubtree(
+              root,
+              refreshAffectedAlignment,
+              job.intrinsicInvalidationFollowUps.has(root),
+            );
+          }
           return false;
         },
       });
     }
   }
 
-  private collectNodeCandidate(node: Node): HTMLElement | null {
+  private collectNodeCandidate(
+    node: Node,
+    refreshAffectedAlignment: boolean,
+  ): HTMLElement | null {
     if (node.nodeType === 3) return findTextContainer(node as Text);
     if (node.nodeType !== 1) return null;
 
     const element = node as Element;
-    if (element.shadowRoot) this.registerOpenShadowRoot(element.shadowRoot);
+    if (element.shadowRoot) {
+      this.registerOpenShadowRoot(element.shadowRoot);
+      if (refreshAffectedAlignment) this.enqueueSubtree(element.shadowRoot, true);
+    }
     this.trackCustomElement(element);
     if (isTextField(element)) return element as HTMLElement;
     if (
@@ -865,42 +1213,42 @@ export class TayamunDirectionEngine {
     if (this.removedJobs.has(root)) return;
     let walker: TreeWalker | undefined;
     let current: Node | null | undefined;
+    const finish = (): boolean => {
+      this.removedJobs.delete(root);
+      if (this.active && root.isConnected) this.enqueueSubtree(root, false, true);
+      return true;
+    };
     const job: WorkJob = {
       step: () => {
-        if (root.isConnected) {
-          this.removedJobs.delete(root);
-          if (this.active) this.enqueueSubtree(root);
-          return true;
-        }
         if (current === undefined) {
           const ownerDocument = root.nodeType === 9 ? (root as Document) : root.ownerDocument;
-          if (!ownerDocument) {
-            this.removedJobs.delete(root);
-            return true;
-          }
+          if (!ownerDocument) return finish();
           current = root.nodeType === 1 ? root : null;
           walker = ownerDocument.createTreeWalker(root, 1);
           if (current === null) current = walker.nextNode();
         }
 
-        if (!current) {
-          this.removedJobs.delete(root);
-          return true;
-        }
+        if (!current) return finish();
 
         const element = current as Element;
-        if (
-          element instanceof this.document.defaultView!.HTMLElement &&
-          this.affected.has(element as HTMLElement)
-        ) {
-          this.restore(element as HTMLElement);
-        }
-        if (element.shadowRoot) {
-          const observer = this.observers.get(element.shadowRoot);
-          observer?.disconnect();
-          this.observers.delete(element.shadowRoot);
-          this.removeShadowFontStyle(element.shadowRoot);
-          this.enqueueRemoved(element.shadowRoot);
+        // The removal walk is already scheduler-sliced. Refresh intrinsic facts
+        // here and again during a raced reinsertion scan so detached attribute
+        // changes cannot survive regardless of where this live walker was.
+        invalidateElementFacts(element);
+        if (!element.isConnected) {
+          if (
+            element instanceof this.document.defaultView!.HTMLElement &&
+            this.affected.has(element as HTMLElement)
+          ) {
+            this.restore(element as HTMLElement);
+          }
+          if (element.shadowRoot) {
+            const observer = this.observers.get(element.shadowRoot);
+            observer?.disconnect();
+            this.observers.delete(element.shadowRoot);
+            this.removeShadowFontStyle(element.shadowRoot);
+            this.enqueueRemoved(element.shadowRoot);
+          }
         }
         current = walker!.nextNode();
         return false;
@@ -1035,8 +1383,83 @@ export class TayamunDirectionEngine {
     });
   }
 
+  private outerEditingHostsFor(element: HTMLElement): Set<HTMLElement> {
+    const owners = new Set<HTMLElement>();
+    let ancestor = composedParent(element);
+    for (let depth = 0; ancestor && depth < 64; depth += 1) {
+      const host = editingHostFor(ancestor);
+      if (host && host !== element) owners.add(host);
+      ancestor = composedParent(ancestor);
+    }
+    return owners;
+  }
+
+  private rememberIndependentEditorField(element: HTMLElement): void {
+    const owners = this.outerEditingHostsFor(element);
+    const previousOwners = this.independentEditorOwners.get(element);
+    if (
+      previousOwners?.size === owners.size &&
+      [...previousOwners].every((owner) => owners.has(owner))
+    ) {
+      return;
+    }
+    this.forgetIndependentEditorField(element);
+    if (owners.size === 0) return;
+
+    for (const owner of owners) {
+      let fields = this.independentEditorFields.get(owner);
+      if (!fields) {
+        fields = new Set();
+        this.independentEditorFields.set(owner, fields);
+      }
+      fields.add(element);
+    }
+    this.independentEditorOwners.set(element, owners);
+  }
+
+  private forgetIndependentEditorField(element: HTMLElement): void {
+    const owners = this.independentEditorOwners.get(element);
+    if (!owners) return;
+    for (const owner of owners) this.independentEditorFields.get(owner)?.delete(element);
+    this.independentEditorOwners.delete(element);
+  }
+
+  private enqueueIndependentEditorRefresh(host: HTMLElement): void {
+    const fields = this.independentEditorFields.get(host);
+    if (!fields || fields.size === 0 || this.independentRefreshQueued.has(host)) return;
+
+    this.independentRefreshQueued.add(host);
+    const iterator = fields.values();
+    this.enqueueJob({
+      step: () => {
+        if (!this.active) {
+          this.independentRefreshQueued.delete(host);
+          return true;
+        }
+        const next = iterator.next();
+        if (next.done) {
+          this.independentRefreshQueued.delete(host);
+          return true;
+        }
+
+        const field = next.value;
+        if (!field.isConnected || !this.outerEditingHostsFor(field).has(host)) {
+          this.forgetIndependentEditorField(field);
+          return false;
+        }
+        invalidateElementFacts(field);
+        invalidateDetectionCaches();
+        if (this.affected.has(field)) this.enqueueAlignmentRefresh(field);
+        this.enqueueReconcile(field);
+        return false;
+      },
+    });
+  }
+
   private reconcile(element: HTMLElement): void {
     let text = '';
+    const nativeField = element.tagName === 'INPUT' || element.tagName === 'TEXTAREA';
+    if (nativeField) this.rememberIndependentEditorField(element);
     if (isTextField(element)) {
       if (!element.isConnected || !isDisplayed(element) || isExcluded(element)) {
         this.restore(element);
@@ -1045,6 +1468,7 @@ export class TayamunDirectionEngine {
       text = getTextFieldValue(element);
     } else {
       const editingHost = editingHostFor(element);
+      if (editingHost === element) this.rememberIndependentEditorField(element);
       if (editingHost && editingHost !== element) {
         this.restore(element);
         this.enqueueReconcile(editingHost);
@@ -1079,8 +1503,8 @@ export class TayamunDirectionEngine {
     });
     if (!this.affected.has(element)) {
       this.affected.add(element);
-      this.appliedChanges += 1;
     }
+    this.rememberIndependentEditorField(element);
   }
 
   private needsDirectionOverride(element: HTMLElement): boolean {
@@ -1089,8 +1513,20 @@ export class TayamunDirectionEngine {
   }
 
   private restore(element: HTMLElement): void {
+    const editingHost = element.isConnected ? editingHostFor(element) : null;
+    if (
+      this.active &&
+      element.isConnected &&
+      (element.tagName === 'INPUT' ||
+        element.tagName === 'TEXTAREA' ||
+        editingHost === element)
+    ) {
+      this.rememberIndependentEditorField(element);
+    } else {
+      this.forgetIndependentEditorField(element);
+    }
     this.directionFlipped.delete(element);
-    if (this.affected.delete(element)) this.appliedChanges += 1;
+    this.affected.delete(element);
     this.unmarkAffected(element);
     this.styles.restore(element);
   }
@@ -1142,10 +1578,16 @@ export class TayamunDirectionEngine {
     if (!registry) return;
 
     this.trackedCustomElements.add(element);
-    void registry.whenDefined(element.localName).then(() => {
-      if (!this.active || !element.isConnected || !element.shadowRoot) return;
-      this.registerOpenShadowRoot(element.shadowRoot);
-    });
+    void registry.whenDefined(element.localName).then(
+      () => {
+        this.trackedCustomElements.delete(element);
+        if (!this.active || !element.isConnected || !element.shadowRoot) return;
+        this.registerOpenShadowRoot(element.shadowRoot);
+      },
+      () => {
+        this.trackedCustomElements.delete(element);
+      },
+    );
   }
 
   private enqueueJob(job: WorkJob): void {
@@ -1184,8 +1626,12 @@ export class TayamunDirectionEngine {
     this.targetJobs.clear();
     this.subtreeJobs.clear();
     this.removedJobs.clear();
+    this.editorMutationJobs.clear();
     this.styleRepairQueued.clear();
     this.alignmentRefreshQueued.clear();
+    this.independentRefreshQueued.clear();
+    this.independentEditorFields = new WeakMap();
+    this.independentEditorOwners = new WeakMap();
     this.shadowStyleRepairQueued.clear();
     this.restyleJob = undefined;
     this.fontRestyleJob = undefined;

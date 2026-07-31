@@ -163,6 +163,7 @@ interface ElementFacts {
   classification?: 'inline' | 'safe' | 'layout';
   container?: HTMLElement | null;
   editingHost?: HTMLElement | null;
+  editingHostDepthExceeded?: boolean;
 }
 
 // Facts that depend on an element's own attributes only. They survive epoch
@@ -186,8 +187,9 @@ export function invalidateDetectionCaches(): void {
   factsEpoch += 1;
 }
 
-/** Drops the attribute-derived facts of one element after its attributes change. */
+/** Drops one element's derived and attribute facts after its attributes may have changed. */
 export function invalidateElementFacts(element: Element): void {
+  elementFacts.delete(element);
   intrinsicFacts.delete(element);
 }
 
@@ -358,7 +360,15 @@ export function editingHostFor(element: Element): HTMLElement | null {
   let current: Element | null = element;
   let host: HTMLElement | null = null;
   let ownedCount = 0;
+  let remainingDepth = MAX_ANCESTOR_DEPTH;
+  let exhausted = false;
   while (current) {
+    if (remainingDepth === 0) {
+      exhausted = true;
+      break;
+    }
+    remainingDepth -= 1;
+
     const editable = current.getAttribute('contenteditable');
     const isBoundary = editable !== null;
     const isNonEditableBoundary = isBoundary && editable.toLowerCase() === 'false';
@@ -367,6 +377,10 @@ export function editingHostFor(element: Element): HTMLElement | null {
     if (current !== element) {
       const cached = elementFacts.get(current);
       if (cached && cached.epoch === factsEpoch && cached.editingHost !== undefined) {
+        if (cached.editingHostDepthExceeded) {
+          exhausted = true;
+          break;
+        }
         if (cached.editingHost) {
           host = cached.editingHost;
           ownedCount = chain.length;
@@ -389,6 +403,19 @@ export function editingHostFor(element: Element): HTMLElement | null {
     chain.push(current);
     current = composedParent(current);
   }
+  if (exhausted) {
+    // A nearer editable may only be a redundant child of an outer host. Until
+    // the boundary is known, treat this chain as ineligible rather than styling
+    // the wrong editor node.
+    for (const item of chain) {
+      const itemFacts = factsFor(item);
+      itemFacts.editingHost = null;
+      itemFacts.editingHostDepthExceeded = true;
+      itemFacts.displayed = false;
+      itemFacts.excluded = true;
+    }
+    return null;
+  }
   for (let index = 0; index < chain.length; index += 1) {
     factsFor(chain[index]!).editingHost = index < ownedCount ? host : null;
   }
@@ -408,7 +435,15 @@ export function isExcluded(element: Element): boolean {
   const chain: Element[] = [];
   let current: Element | null = element;
   let excluded = false;
+  let remainingDepth = MAX_ANCESTOR_DEPTH;
+  let exhausted = false;
   while (current) {
+    if (remainingDepth === 0) {
+      exhausted = true;
+      break;
+    }
+    remainingDepth -= 1;
+
     if (current !== element) {
       const cached = elementFacts.get(current);
       if (cached && cached.epoch === factsEpoch && cached.excluded !== undefined) {
@@ -424,6 +459,7 @@ export function isExcluded(element: Element): boolean {
     chain.push(current);
     current = composedParent(current);
   }
+  if (exhausted) excluded = true;
   for (const item of chain) factsFor(item).excluded = excluded;
   return excluded;
 }
@@ -447,7 +483,15 @@ export function isDisplayed(element: Element): boolean {
   const chain: Element[] = [];
   let current: Element | null = element;
   let displayed = true;
+  let remainingDepth = MAX_ANCESTOR_DEPTH;
+  let exhausted = false;
   while (current) {
+    if (remainingDepth === 0) {
+      exhausted = true;
+      break;
+    }
+    remainingDepth -= 1;
+
     if (current !== element) {
       const cached = elementFacts.get(current);
       if (cached && cached.epoch === factsEpoch && cached.displayed !== undefined) {
@@ -463,6 +507,7 @@ export function isDisplayed(element: Element): boolean {
     chain.push(current);
     current = composedParent(current);
   }
+  if (exhausted) displayed = false;
   for (const item of chain) factsFor(item).displayed = displayed;
   return displayed;
 }

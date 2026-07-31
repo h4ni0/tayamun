@@ -192,7 +192,14 @@ export class OwnedStyles {
     }
 
     const pageStyle = element.ownerDocument.defaultView?.getComputedStyle(element);
-    const pageDirection = (pageStyle?.direction ?? '').toLowerCase();
+    const computedDirection = (pageStyle?.direction ?? '').trim().toLowerCase();
+    const declaredDirection = element.getAttribute('dir')?.trim().toLowerCase();
+    const pageDirection =
+      computedDirection === 'ltr' || computedDirection === 'rtl'
+        ? computedDirection
+        : declaredDirection === 'ltr' || declaredDirection === 'rtl'
+          ? declaredDirection
+          : computedDirection;
     const pageAlignment = (pageStyle?.textAlign ?? '').toLowerCase();
     const directionFlipped = pageDirection !== 'rtl';
     if (!state) return directionFlipped;
@@ -248,6 +255,18 @@ export class OwnedStyles {
   ownsDirection(element: HTMLElement): boolean {
     const state = this.states.get(element);
     return state?.properties.has('direction') === true;
+  }
+
+  needsClassAlignmentRefresh(element: HTMLElement): boolean {
+    const state = this.states.get(element);
+    if (
+      state?.alignRight ||
+      state?.properties.has('direction') ||
+      state?.properties.has('text-align')
+    ) {
+      return true;
+    }
+    return PHYSICAL_LEFT_ALIGNMENTS.has(this.computedAlignment(element));
   }
 
   private hasProtectedAlignment(element: HTMLElement): boolean {
