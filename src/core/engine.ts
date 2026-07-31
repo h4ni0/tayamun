@@ -4,7 +4,7 @@ import {
   computedStyleFor,
   editingHostFor,
   findTextContainer,
-  firstUnicodeLetterIsArabic,
+  textShouldUseRtl,
   getContainerText,
   getTextFieldValue,
   invalidateAllElementFacts,
@@ -1057,7 +1057,7 @@ export class TayamunDirectionEngine {
       text = getContainerText(element);
     }
 
-    if (!firstUnicodeLetterIsArabic(text)) {
+    if (!textShouldUseRtl(text)) {
       this.restore(element);
       return;
     }

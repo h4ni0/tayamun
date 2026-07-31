@@ -2,39 +2,146 @@ import { afterEach, describe, expect, it } from 'vitest';
 import {
   editingHostFor,
   findTextContainer,
-  firstUnicodeLetterIsArabic,
   getContainerText,
   isSafeTextContainer,
+  textShouldUseRtl,
 } from '../src/core/detection';
 
 afterEach(() => {
   document.body.replaceChildren();
 });
 
-describe('firstUnicodeLetterIsArabic', () => {
-  it('skips non-letters and recognizes the standard Arabic alphabet', () => {
-    expect(firstUnicodeLetterIsArabic('  ١٢٣ — 👋 َإسلام')).toBe(true);
-    expect(firstUnicodeLetterIsArabic('\u0654اَلْعَرَبِيَّة')).toBe(true);
-    expect(firstUnicodeLetterIsArabic('ٱلسَّلَام')).toBe(true);
+describe('textShouldUseRtl', () => {
+  it('accepts substantial mixed-language text', () => {
+    expect(textShouldUseRtl('mgrep: بحث بالمعنى داخل المشروع لوكلاء البرمجة')).toBe(true);
+    expect(textShouldUseRtl('Google مفيد للبحث ثم نستخدم Chrome للوصول إلى النتيجة')).toBe(true);
+    expect(textShouldUseRtl('This is نص عربي طويل وواضح')).toBe(true);
+    expect(textShouldUseRtl('JavaScript في نص عربي')).toBe(true);
   });
 
-  it('leaves text unchanged when the first letter is not standard Arabic', () => {
-    expect(firstUnicodeLetterIsArabic('123 Hello العربية')).toBe(false);
-    expect(firstUnicodeLetterIsArabic('پ فارسی')).toBe(false);
-    expect(firstUnicodeLetterIsArabic('🧭 — ١٢٣')).toBe(false);
-    expect(firstUnicodeLetterIsArabic('𐐀 العربية')).toBe(false);
+  it('rejects incidental Arabic and four leading non-Arabic words', () => {
+    expect(textShouldUseRtl('API العربية')).toBe(false);
+    expect(textShouldUseRtl('English text with one كلمة')).toBe(false);
+    expect(textShouldUseRtl('https://example.com شرح عربي قصير')).toBe(false);
+    expect(textShouldUseRtl('one two three four عربي عربي عربي عربي عربي عربي')).toBe(false);
+  });
+
+  it('requires eight Arabic score points and a sixty-percent share', () => {
+    expect(textShouldUseRtl('EnglishWord العربية')).toBe(false);
+    expect(textShouldUseRtl('one aa عربي عربي')).toBe(true);
+    expect(textShouldUseRtl('one two عربي عربي')).toBe(false);
+    expect(textShouldUseRtl('test word عربي عربي عربي')).toBe(true);
+  });
+
+  it('caps each word at four score points', () => {
+    expect(textShouldUseRtl('EnglishWord عربي عربي')).toBe(true);
+    expect(textShouldUseRtl('English العربيةالعربيةالعربية')).toBe(false);
+  });
+
+  it('allows at most three leading non-Arabic words', () => {
+    expect(textShouldUseRtl('one two three عربي عربي عربي عربي عربي')).toBe(true);
+    expect(textShouldUseRtl('one two three four عربي عربي عربي عربي عربي عربي')).toBe(false);
+  });
+
+  it('treats punctuation, digits, emoji, and combining marks as neutral', () => {
+    expect(textShouldUseRtl('123 — 👋 English... عَرَبِي، عَرَبِي!')).toBe(true);
+    expect(textShouldUseRtl('\u0654English ع\u0654ربي عر\u0652بي')).toBe(true);
+    expect(textShouldUseRtl('123 — 👋 \u0654\u0652')).toBe(false);
+  });
+
+  it('uses Unicode letters while keeping Persian- and Urdu-only letters non-Arabic', () => {
+    expect(textShouldUseRtl('پژگچ عربي')).toBe(false);
+    expect(textShouldUseRtl('𐐀 عربي عربي')).toBe(true);
+    expect(textShouldUseRtl('پ فارسی')).toBe(false);
+    expect(textShouldUseRtl('English عربپ عربي')).toBe(true);
+    expect(textShouldUseRtl('English عرپچ عربي عربي')).toBe(false);
+  });
+
+  it('does not score words after the thirty-second', () => {
+    const text = `word ${'عربي '.repeat(19)}${'word '.repeat(12)}عربي`;
+    expect(textShouldUseRtl(text)).toBe(false);
+  });
+
+  it('inspects at most 512 code points', () => {
+    const neutralPrefix = '.'.repeat(700);
+    expect(textShouldUseRtl(`${neutralPrefix}a${'.'.repeat(501)} عربي عربي`)).toBe(true);
+    expect(textShouldUseRtl(`${neutralPrefix}a${'.'.repeat(502)} عربي عربي`)).toBe(false);
+  });
+
+  it('preserves the immediate Arabic-first result regardless of later text', () => {
+    expect(textShouldUseRtl(`${'.'.repeat(512)}العربية ${'English '.repeat(100)}`)).toBe(true);
+    expect(textShouldUseRtl(`  ١٢٣ — 👋 َإسلام ${'English '.repeat(100)}`)).toBe(true);
+    expect(textShouldUseRtl(`\u0654اَلْعَرَبِيَّة ${'English '.repeat(100)}`)).toBe(true);
+    expect(textShouldUseRtl(`ٱلسَّلَام ${'English '.repeat(100)}`)).toBe(true);
   });
 });
 
 describe('text container selection', () => {
   it('groups inline text at its nearest block in DOM order', () => {
-    document.body.innerHTML = '<p id="target"><span>١٢٣، </span><strong>العربية</strong></p>';
+    document.body.innerHTML =
+      '<p id="target"><span>١٢٣، </span><strong>العربية</strong><em> English text</em></p>';
     const paragraph = document.querySelector<HTMLElement>('#target')!;
     const text = paragraph.querySelector('strong')!.firstChild as Text;
 
     expect(findTextContainer(text)).toBe(paragraph);
     expect(getContainerText(paragraph)).toBe('١٢٣، العربية');
     expect(isSafeTextContainer(paragraph)).toBe(true);
+  });
+
+  it('collects following inline nodes when an English prefix needs fallback scoring', () => {
+    document.body.innerHTML =
+      '<p id="target"><strong>mgrep:</strong> بحث بالمعنى داخل المشروع لوكلاء البرمجة</p>';
+    const paragraph = document.querySelector<HTMLElement>('#target')!;
+    const text = getContainerText(paragraph);
+
+    expect(text).toBe('mgrep: بحث بالمعنى داخل المشروع لوكلاء البرمجة');
+    expect(textShouldUseRtl(text)).toBe(true);
+  });
+
+  it('ignores hidden neutral text that would otherwise consume the fallback window', () => {
+    document.body.innerHTML =
+      `<p id="target">JavaScript<span hidden>${'1'.repeat(512)}</span> في نص عربي</p>`;
+    const text = getContainerText(document.querySelector<HTMLElement>('#target')!);
+
+    expect(text).toBe('JavaScript في نص عربي');
+    expect(textShouldUseRtl(text)).toBe(true);
+  });
+
+  it('preserves rendered word boundaries in rich editors', () => {
+    document.body.innerHTML = [
+      '<div id="breaks" contenteditable>JavaScript<br>في<br>نص<br>عربي</div>',
+      '<div id="blocks" contenteditable><p>JavaScript</p><p>في</p><p>نص</p><p>عربي</p></div>',
+      '<div id="gaps" contenteditable><span>JavaScript</span><br><i hidden></i><span>في نص عربي</span></div>',
+    ].join('');
+    const breaks = getContainerText(document.querySelector<HTMLElement>('#breaks')!);
+    const blocks = getContainerText(document.querySelector<HTMLElement>('#blocks')!);
+    const gaps = getContainerText(document.querySelector<HTMLElement>('#gaps')!);
+
+    expect(breaks).toBe('JavaScript في نص عربي');
+    expect(blocks).toBe('JavaScript في نص عربي');
+    expect(gaps).toBe('JavaScript في نص عربي');
+    expect(textShouldUseRtl(breaks)).toBe(true);
+    expect(textShouldUseRtl(blocks)).toBe(true);
+    expect(textShouldUseRtl(gaps)).toBe(true);
+  });
+
+  it('keeps a word continuous across inline formatting nodes', () => {
+    document.body.innerHTML =
+      '<div id="target" contenteditable><p><span>Java</span><em>Script</em> في نص عربي</p></div>';
+    const text = getContainerText(document.querySelector<HTMLElement>('#target')!);
+
+    expect(text).toBe('JavaScript في نص عربي');
+    expect(textShouldUseRtl(text)).toBe(true);
+  });
+
+  it('keeps the Arabic-first collection window beyond the fallback limit', () => {
+    const prefix = '.'.repeat(2_000);
+    document.body.innerHTML =
+      `<p id="target">${prefix}<strong>العربية</strong><em> English text</em></p>`;
+    const text = getContainerText(document.querySelector<HTMLElement>('#target')!);
+
+    expect(text).toBe(`${prefix}العربية`);
+    expect(textShouldUseRtl(text)).toBe(true);
   });
 
   it('targets a list item itself so its marker follows the text it labels', () => {

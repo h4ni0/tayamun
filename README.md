@@ -10,7 +10,7 @@
 
 </div>
 
-تَيَامُن إضافة مفتوحة المصدر بمعيار Manifest V3 لمتصفحي Chrome وFirefox. تتعرّف إلى كتل النص التي يبدأ أول حرف Unicode فيها بحرف عربي، ثم تُصلح اتجاه عرضها مع الحفاظ على النص وتخطيط الصفحة.
+تَيَامُن إضافة مفتوحة المصدر بمعيار Manifest V3 لمتصفحي Chrome وFirefox. تتعرّف فورًا إلى كتل النص التي يبدأ أول حرف Unicode فيها بحرف عربي، وتستخدم فحصًا محافظًا ومحدودًا للنص المختلط ذي الغلبة العربية، ثم تُصلح اتجاه العرض مع الحفاظ على النص وتخطيط الصفحة.
 
 ![نافذة تَيَامُن العربية ونص مختلط بعد تصحيح اتجاهه](store/assets/screenshot-popup-1280x800.png)
 
@@ -80,7 +80,7 @@ python3 -m http.server 8080 --directory .output
 
 ## English
 
-Tayamun is an open-source Manifest V3 extension for Chrome and Firefox. It detects text blocks whose first Unicode letter is Arabic and fixes their display direction while preserving the page’s text and layout.
+Tayamun is an open-source Manifest V3 extension for Chrome and Firefox. It immediately detects text blocks whose first Unicode letter is Arabic and uses a conservative, bounded fallback for Arabic-dominant mixed text, then fixes their display direction while preserving the page’s text and layout.
 
 ### Features
 

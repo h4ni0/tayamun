@@ -1,4 +1,5 @@
 const UNICODE_LETTER = /\p{Letter}/u;
+const UNICODE_MARK = /\p{Mark}/u;
 
 // Arabic letters used by standard Arabic orthography. Extended Persian and Urdu
 // letters are intentionally not included.
@@ -143,7 +144,16 @@ const TEXT_INPUT_TYPES = new Set(['', 'text', 'search', 'tel']);
 const MAX_ANCESTOR_DEPTH = 64;
 const MAX_DESCENDANT_ELEMENTS = 32;
 const MAX_TEXT_NODES = 64;
-const MAX_INSPECTED_CODE_POINTS = 8_192;
+const MAX_BOUNDARY_SIBLINGS = 16;
+const MAX_FIRST_LETTER_CODE_POINTS = 8_192;
+const MAX_DIRECTION_CODE_POINTS = 512;
+const MAX_DIRECTION_WORDS = 32;
+const MAX_WORD_SCORE = 4;
+const MAX_LEADING_NON_ARABIC_WORDS = 3;
+const MIN_ARABIC_SCORE = 8;
+const ARABIC_RATIO_MULTIPLIER = 5;
+const TOTAL_RATIO_MULTIPLIER = 3;
+const MAX_COLLECTED_CODE_UNITS = 2 * (MAX_FIRST_LETTER_CODE_POINTS + MAX_DIRECTION_CODE_POINTS);
 
 interface ElementFacts {
   epoch: number;
@@ -221,15 +231,79 @@ function hasUnsafeContent(element: Element): boolean {
   return intrinsic.unsafeContent;
 }
 
-export function firstUnicodeLetterIsArabic(text: string): boolean {
-  let inspected = 0;
+function firstUnicodeLetterIsStandardArabic(text: string, maxCodePoints: number): boolean | null {
+  let inspectedCodePoints = 0;
   for (const character of text) {
-    if (inspected++ >= MAX_INSPECTED_CODE_POINTS) return false;
+    if (inspectedCodePoints === maxCodePoints) return null;
+    inspectedCodePoints += 1;
     if (!UNICODE_LETTER.test(character)) continue;
     return STANDARD_ARABIC_LETTER.test(character);
   }
+  return null;
+}
 
-  return false;
+export function textShouldUseRtl(text: string): boolean {
+  let searchedCodePoints = 0;
+  let inspectedCodePoints = 0;
+  let fallbackStarted = false;
+  let wordCount = 0;
+  let arabicScore = 0;
+  let totalScore = 0;
+  let wordArabicLetters = 0;
+  let wordOtherLetters = 0;
+  let wordScore = 0;
+  let earlyArabicWordSeen = false;
+
+  for (const character of text) {
+    if (!fallbackStarted) {
+      if (searchedCodePoints === MAX_FIRST_LETTER_CODE_POINTS) return false;
+      searchedCodePoints += 1;
+      if (!UNICODE_LETTER.test(character)) continue;
+      if (STANDARD_ARABIC_LETTER.test(character)) return true;
+      fallbackStarted = true;
+    }
+
+    if (inspectedCodePoints === MAX_DIRECTION_CODE_POINTS || wordCount === MAX_DIRECTION_WORDS) break;
+    inspectedCodePoints += 1;
+
+    if (UNICODE_LETTER.test(character)) {
+      const isArabic = STANDARD_ARABIC_LETTER.test(character);
+      if (isArabic) wordArabicLetters += 1;
+      else wordOtherLetters += 1;
+      if (wordScore < MAX_WORD_SCORE) wordScore += 1;
+      continue;
+    }
+
+    if (UNICODE_MARK.test(character) && wordScore !== 0) continue;
+    if (wordScore === 0) continue;
+
+    wordCount += 1;
+    totalScore += wordScore;
+    if (wordArabicLetters > wordOtherLetters) {
+      arabicScore += wordScore;
+      if (wordCount <= MAX_LEADING_NON_ARABIC_WORDS + 1) earlyArabicWordSeen = true;
+    }
+    if (wordCount === MAX_LEADING_NON_ARABIC_WORDS + 1 && !earlyArabicWordSeen) return false;
+
+    wordArabicLetters = 0;
+    wordOtherLetters = 0;
+    wordScore = 0;
+  }
+
+  if (wordScore !== 0 && wordCount < MAX_DIRECTION_WORDS) {
+    wordCount += 1;
+    totalScore += wordScore;
+    if (wordArabicLetters > wordOtherLetters) {
+      arabicScore += wordScore;
+      if (wordCount <= MAX_LEADING_NON_ARABIC_WORDS + 1) earlyArabicWordSeen = true;
+    }
+  }
+
+  return (
+    earlyArabicWordSeen &&
+    arabicScore >= MIN_ARABIC_SCORE &&
+    arabicScore * ARABIC_RATIO_MULTIPLIER >= totalScore * TOTAL_RATIO_MULTIPLIER
+  );
 }
 
 export function isTextInput(element: Element): element is HTMLInputElement {
@@ -520,6 +594,38 @@ export function isSafeTextContainer(container: HTMLElement): boolean {
   return !hasUnsafeDescendant(container);
 }
 
+function hasRenderedBoundaryBefore(previousText: Text, text: Text, container: HTMLElement): boolean {
+  let current: Node | null = text;
+  let depth = 0;
+  while (current && current !== container && depth++ < MAX_ANCESTOR_DEPTH) {
+    if (
+      current.nodeType === 1 &&
+      !(current as Element).contains(previousText) &&
+      classifyContainer(current as Element) !== 'inline'
+    ) {
+      return true;
+    }
+
+    let inspectedSiblings = 0;
+    let sibling = current.previousSibling;
+    while (sibling && inspectedSiblings++ < MAX_BOUNDARY_SIBLINGS) {
+      if (sibling.nodeType === 1) {
+        const element = sibling as Element;
+        if (isDisplayed(element) && (element.tagName === 'BR' || classifyContainer(element) !== 'inline')) {
+          return true;
+        }
+        if (element.contains(previousText)) return false;
+      } else if (sibling === previousText) {
+        return false;
+      }
+      sibling = sibling.previousSibling;
+    }
+    if (sibling) return true;
+    current = current.parentNode;
+  }
+  return false;
+}
+
 export function getContainerText(container: HTMLElement): string {
   const document = container.ownerDocument;
   const nodeFilter = document.defaultView?.NodeFilter;
@@ -527,17 +633,29 @@ export function getContainerText(container: HTMLElement): string {
   const parts: string[] = [];
 
   let inspected = 0;
+  let collectedCodeUnits = 0;
+  let firstLetterSeen = false;
+  let previousText: Text | null = null;
   let current = walker.nextNode();
-  while (current && inspected++ < MAX_TEXT_NODES) {
+  while (current && inspected++ < MAX_TEXT_NODES && collectedCodeUnits < MAX_COLLECTED_CODE_UNITS) {
     const text = current as Text;
-    if (text.data) {
-      if (!UNICODE_LETTER.test(text.data)) {
-        // Punctuation cannot decide direction, so avoid an expensive repeated
-        // container/visibility lookup for it.
-        parts.push(text.data);
-      } else if (findTextContainer(text) === container) {
-        parts.push(text.data);
-        break;
+    if (text.data && findTextContainer(text) === container) {
+      if (previousText && hasRenderedBoundaryBefore(previousText, text, container)) {
+        parts.push(' ');
+        collectedCodeUnits += 1;
+      }
+
+      if (collectedCodeUnits < MAX_COLLECTED_CODE_UNITS) {
+        const remaining = MAX_COLLECTED_CODE_UNITS - collectedCodeUnits;
+        const part = text.data.length <= remaining ? text.data : text.data.slice(0, remaining);
+        const partFirstLetterIsArabic = firstUnicodeLetterIsStandardArabic(part, MAX_FIRST_LETTER_CODE_POINTS);
+        parts.push(part);
+        collectedCodeUnits += part.length;
+        previousText = text;
+        if (!firstLetterSeen && partFirstLetterIsArabic !== null) {
+          firstLetterSeen = true;
+          if (partFirstLetterIsArabic) break;
+        }
       }
     }
     current = walker.nextNode();

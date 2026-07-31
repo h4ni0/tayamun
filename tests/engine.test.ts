@@ -316,6 +316,27 @@ describe('TayamunDirectionEngine', () => {
     expect([...layout.children]).toEqual(children);
   });
 
+  it('applies mixed-language direction to the containing block without touching inline markup', () => {
+    document.body.innerHTML = [
+      '<p id="positive"><strong>mgrep:</strong> بحث بالمعنى داخل المشروع لوكلاء البرمجة</p>',
+      '<p id="negative">English text with one كلمة</p>',
+    ].join('');
+    const positive = document.querySelector<HTMLElement>('#positive')!;
+    const negative = document.querySelector<HTMLElement>('#negative')!;
+    const inline = positive.querySelector<HTMLElement>('strong')!;
+
+    engine = new TayamunDirectionEngine(document, defaults);
+    engine.start();
+    engine.flush();
+
+    expect(positive.hasAttribute('data-tayamun-affected-q7m3')).toBe(true);
+    expect(positive.style.direction).toBe('rtl');
+    expect(inline.hasAttribute('data-tayamun-affected-q7m3')).toBe(false);
+    expect(inline.style.direction).toBe('');
+    expect(negative.hasAttribute('data-tayamun-affected-q7m3')).toBe(false);
+    expect(negative.style.direction).toBe('');
+  });
+
   it('tracks live text fields while excluding sensitive and non-text inputs', () => {
     document.body.innerHTML = [
       '<input id="text" type="text" placeholder="العربية">',
@@ -341,6 +362,11 @@ describe('TayamunDirectionEngine', () => {
     input.dispatchEvent(new Event('input', { bubbles: true, composed: true }));
     engine.flush();
     expect(input.style.direction).toBe('');
+
+    input.value = 'mgrep: بحث بالمعنى داخل المشروع لوكلاء البرمجة';
+    input.dispatchEvent(new Event('input', { bubbles: true, composed: true }));
+    engine.flush();
+    expect(input.style.direction).toBe('rtl');
 
     area.value = '١٢٣، العربية';
     area.dispatchEvent(new Event('input', { bubbles: true, composed: true }));
@@ -556,6 +582,37 @@ describe('TayamunDirectionEngine', () => {
     await settle();
 
     expect(host.hasAttribute('data-tayamun-affected-q7m3')).toBe(true);
+    expect(host.querySelectorAll('[data-tayamun-affected-q7m3]')).toHaveLength(0);
+    expect(subtreeScans(walkerSpy, host)).toBe(0);
+    walkerSpy.mockRestore();
+  });
+
+  it('moves a live editor host into and out of the mixed-language verdict without touching its subtree', async () => {
+    document.body.innerHTML =
+      '<div id="host" contenteditable="true">English text with one كلمة</div>';
+    const host = document.querySelector<HTMLElement>('#host')!;
+    engine = new TayamunDirectionEngine(document, defaults);
+    engine.start();
+    engine.flush();
+
+    expect(host.hasAttribute('data-tayamun-affected-q7m3')).toBe(false);
+    expect(host.style.direction).toBe('');
+    expect(host.querySelectorAll('[data-tayamun-affected-q7m3]')).toHaveLength(0);
+    const walkerSpy = vi.spyOn(document, 'createTreeWalker');
+
+    host.innerHTML = 'JavaScript<br>في<br>نص<br>عربي';
+    await settle();
+
+    expect(host.hasAttribute('data-tayamun-affected-q7m3')).toBe(true);
+    expect(host.style.direction).toBe('rtl');
+    expect(host.querySelectorAll('[data-tayamun-affected-q7m3]')).toHaveLength(0);
+    expect(subtreeScans(walkerSpy, host)).toBe(0);
+
+    host.textContent = 'API العربية';
+    await settle();
+
+    expect(host.hasAttribute('data-tayamun-affected-q7m3')).toBe(false);
+    expect(host.style.direction).toBe('');
     expect(host.querySelectorAll('[data-tayamun-affected-q7m3]')).toHaveLength(0);
     expect(subtreeScans(walkerSpy, host)).toBe(0);
     walkerSpy.mockRestore();
