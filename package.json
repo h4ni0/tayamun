@@ -34,7 +34,7 @@
     "postinstall": "wxt prepare"
   },
   "devDependencies": {
-    "happy-dom": "^20.10.6",
+    "happy-dom": "^20.11.1",
     "typescript": "^7.0.2",
     "vitest": "^4.1.10",
     "wxt": "^0.20.27"
