@@ -134,7 +134,10 @@ const CODE_EDITOR_SELECTOR = [
   '[data-mode^="text/"]',
 ].join(',');
 
-const UNSAFE_TARGET_TAGS = new Set(['LI', 'SUMMARY']);
+// Every protected or code-editor test asks the same question — "does this element
+// hold content that must not be reordered?" — so both selector lists are matched
+// in one pass instead of two.
+const UNSAFE_CONTENT_SELECTOR = `${PROTECTED_SELECTOR},${CODE_EDITOR_SELECTOR}`;
 
 const TEXT_INPUT_TYPES = new Set(['', 'text', 'search', 'tel']);
 const MAX_ANCESTOR_DEPTH = 64;
@@ -144,9 +147,20 @@ const MAX_INSPECTED_CODE_POINTS = 8_192;
 
 interface ElementFacts {
   epoch: number;
+  style?: CSSStyleDeclaration | null;
   displayed?: boolean;
   excluded?: boolean;
   classification?: 'inline' | 'safe' | 'layout';
+  container?: HTMLElement | null;
+  editingHost?: HTMLElement | null;
+}
+
+// Facts that depend on an element's own attributes only. They survive epoch
+// bumps because no ancestor, stylesheet, or layout change can alter them; the
+// engine drops them per element when that element's observed attributes change.
+interface IntrinsicFacts {
+  selfExcluded?: boolean;
+  unsafeContent?: boolean;
 }
 
 // Facts derived from computed styles are memoized per element within an epoch.
@@ -155,10 +169,21 @@ interface ElementFacts {
 // instead of once per descendant text node.
 let factsEpoch = 0;
 const elementFacts = new WeakMap<Element, ElementFacts>();
+let intrinsicFacts = new WeakMap<Element, IntrinsicFacts>();
 
 /** Drops memoized computed-style facts. Called by the engine before rescanning. */
 export function invalidateDetectionCaches(): void {
   factsEpoch += 1;
+}
+
+/** Drops the attribute-derived facts of one element after its attributes change. */
+export function invalidateElementFacts(element: Element): void {
+  intrinsicFacts.delete(element);
+}
+
+/** Drops all attribute-derived facts after mutations occurred while unobserved. */
+export function invalidateAllElementFacts(): void {
+  intrinsicFacts = new WeakMap();
 }
 
 function factsFor(element: Element): ElementFacts {
@@ -168,6 +193,32 @@ function factsFor(element: Element): ElementFacts {
     elementFacts.set(element, facts);
   }
   return facts;
+}
+
+function intrinsicFor(element: Element): IntrinsicFacts {
+  let facts = intrinsicFacts.get(element);
+  if (!facts) {
+    facts = {};
+    intrinsicFacts.set(element, facts);
+  }
+  return facts;
+}
+
+// The declaration stays live, so cached reads see the current value; caching it
+// avoids allocating one wrapper per visibility test, classification, and
+// direction check of the same element.
+export function computedStyleFor(element: Element): CSSStyleDeclaration | null {
+  const facts = factsFor(element);
+  if (facts.style === undefined) {
+    facts.style = element.ownerDocument.defaultView?.getComputedStyle(element) ?? null;
+  }
+  return facts.style;
+}
+
+function hasUnsafeContent(element: Element): boolean {
+  const intrinsic = intrinsicFor(element);
+  intrinsic.unsafeContent ??= element.matches(UNSAFE_CONTENT_SELECTOR);
+  return intrinsic.unsafeContent;
 }
 
 export function firstUnicodeLetterIsArabic(text: string): boolean {
@@ -201,8 +252,7 @@ export function composedParent(element: Element): Element | null {
 }
 
 function computedDisplay(element: Element): string {
-  const view = element.ownerDocument.defaultView;
-  const display = view?.getComputedStyle(element).display?.trim();
+  const display = computedStyleFor(element)?.display?.trim();
   if (display) return display;
   if (element.tagName === 'LI') return 'list-item';
   if (element.tagName === 'TD' || element.tagName === 'TH') return 'table-cell';
@@ -215,6 +265,60 @@ function computedDisplay(element: Element): string {
 function isEditableBoundary(element: Element): boolean {
   const value = element.getAttribute('contenteditable');
   return value !== null && value.toLowerCase() !== 'false';
+}
+
+/**
+ * Editing host that owns the element's DOM, looking through non-editable islands.
+ * Nested `contenteditable=true` nodes are part of the outer editor unless a
+ * `contenteditable=false` island separates a genuinely nested field. Styling a
+ * redundant inner editable makes reconciling editors remove our writes.
+ *
+ * A whole-document host (design mode) is reported as none. It is a page being
+ * edited rather than one field, and no editor reconciles that DOM.
+ */
+export function editingHostFor(element: Element): HTMLElement | null {
+  const facts = factsFor(element);
+  if (facts.editingHost !== undefined) return facts.editingHost;
+
+  const chain: Element[] = [];
+  let current: Element | null = element;
+  let host: HTMLElement | null = null;
+  let ownedCount = 0;
+  while (current) {
+    const editable = current.getAttribute('contenteditable');
+    const isBoundary = editable !== null;
+    const isNonEditableBoundary = isBoundary && editable.toLowerCase() === 'false';
+    if (isNonEditableBoundary && host) break;
+
+    if (current !== element) {
+      const cached = elementFacts.get(current);
+      if (cached && cached.epoch === factsEpoch && cached.editingHost !== undefined) {
+        if (cached.editingHost) {
+          host = cached.editingHost;
+          ownedCount = chain.length;
+        }
+        break;
+      }
+    }
+
+    if (isBoundary && !isNonEditableBoundary) {
+      const view = current.ownerDocument.defaultView;
+      host =
+        current.tagName !== 'BODY' &&
+        current.tagName !== 'HTML' &&
+        view &&
+        current instanceof view.HTMLElement
+          ? current
+          : null;
+      ownedCount = host ? chain.length + 1 : 0;
+    }
+    chain.push(current);
+    current = composedParent(current);
+  }
+  for (let index = 0; index < chain.length; index += 1) {
+    factsFor(chain[index]!).editingHost = index < ownedCount ? host : null;
+  }
+  return host;
 }
 
 function isForbiddenInput(element: Element): boolean {
@@ -251,6 +355,12 @@ export function isExcluded(element: Element): boolean {
 }
 
 function isSelfExcluded(element: Element): boolean {
+  const intrinsic = intrinsicFor(element);
+  intrinsic.selfExcluded ??= computeSelfExcluded(element);
+  return intrinsic.selfExcluded;
+}
+
+function computeSelfExcluded(element: Element): boolean {
   if (EXCLUDED_TAGS.has(element.tagName) || isForbiddenInput(element)) return true;
   if (element.matches(CODE_EDITOR_SELECTOR)) return true;
   return Boolean(element.namespaceURI) && element.namespaceURI !== 'http://www.w3.org/1999/xhtml';
@@ -286,7 +396,7 @@ export function isDisplayed(element: Element): boolean {
 function isSelfDisplayed(element: Element): boolean {
   if (element.hasAttribute('hidden')) return false;
 
-  const style = element.ownerDocument.defaultView?.getComputedStyle(element);
+  const style = computedStyleFor(element);
   if (style) {
     if (style.display === 'none') return false;
     if (style.visibility === 'hidden' || style.visibility === 'collapse') return false;
@@ -315,23 +425,38 @@ function computeClassification(element: Element): 'inline' | 'safe' | 'layout' {
 }
 
 export function findTextContainer(node: Text | Element): HTMLElement | null {
-  let current: Element | null = node.nodeType === 3 ? (node as Text).parentElement : (node as Element);
+  const start = node.nodeType === 3 ? (node as Text).parentElement : (node as Element);
+  if (!start) return null;
+
+  // Every text node under the same element resolves to the same container, and
+  // reconciliation asks again for each of them. Memoize per starting element:
+  // the answer depends only on facts that already invalidate with the epoch.
+  const facts = factsFor(start);
+  if (facts.container !== undefined) return facts.container;
+  const container = resolveTextContainer(start);
+  facts.container = container;
+  return container;
+}
+
+function resolveTextContainer(start: Element): HTMLElement | null {
+  let current: Element | null = start;
   let inlineFallback: HTMLElement | null = null;
   let depth = 0;
 
-  if (!current || isExcluded(current) || !isDisplayed(current)) return null;
+  if (isExcluded(current) || !isDisplayed(current)) return null;
+
+  // Text being written into an editor belongs to the host, however deeply the
+  // editor nests it. A host laid out as flex would reorder its own children, so
+  // leave those editors untouched rather than target something inside them.
+  const host = editingHostFor(start);
+  if (host) {
+    return isDisplayed(host) && !isExcluded(host) && classifyContainer(host) !== 'layout' ? host : null;
+  }
 
   while (current && depth++ < MAX_ANCESTOR_DEPTH) {
     if (current.tagName === 'HTML' || current.tagName === 'BODY') return null;
-    if (UNSAFE_TARGET_TAGS.has(current.tagName)) return inlineFallback;
-
     const classification = classifyContainer(current);
     if (classification === 'layout') return inlineFallback;
-    if (isEditableBoundary(current)) {
-      return current instanceof current.ownerDocument.defaultView!.HTMLElement
-        ? (current as HTMLElement)
-        : null;
-    }
     if (classification === 'inline') {
       if (current instanceof current.ownerDocument.defaultView!.HTMLElement) {
         inlineFallback = current as HTMLElement;
@@ -358,7 +483,7 @@ export function findTextContainer(node: Text | Element): HTMLElement | null {
 function hasDirectUnsafeChild(container: HTMLElement): boolean {
   if (container.childElementCount > 16) return true;
   for (const child of container.children) {
-    if (child.matches(PROTECTED_SELECTOR) || child.matches(CODE_EDITOR_SELECTOR)) return true;
+    if (hasUnsafeContent(child)) return true;
     if (DEFAULT_BLOCK_TAGS.has(child.tagName) || classifyContainer(child) !== 'inline') return true;
   }
   return false;
@@ -374,7 +499,7 @@ function hasUnsafeDescendant(container: HTMLElement): boolean {
   let current = walker.nextNode() as Element | null;
   while (current && inspected++ < MAX_DESCENDANT_ELEMENTS) {
     if (isDisplayed(current)) {
-      if (current.matches(PROTECTED_SELECTOR) || current.matches(CODE_EDITOR_SELECTOR)) return true;
+      if (hasUnsafeContent(current)) return true;
       if (classifyContainer(current) !== 'inline') return true;
     }
     current = walker.nextNode() as Element | null;
@@ -387,14 +512,11 @@ function hasUnsafeDescendant(container: HTMLElement): boolean {
 
 export function isSafeTextContainer(container: HTMLElement): boolean {
   if (!container.isConnected || !isDisplayed(container) || isExcluded(container)) return false;
-  if (
-    container.tagName === 'HTML' ||
-    container.tagName === 'BODY' ||
-    UNSAFE_TARGET_TAGS.has(container.tagName)
-  ) {
-    return false;
-  }
+  if (container.tagName === 'HTML' || container.tagName === 'BODY') return false;
   if (classifyContainer(container) === 'layout') return false;
+  // An editing host holds text the user is writing, not page structure, so its
+  // own content decides its direction exactly like a text field does.
+  if (isEditableBoundary(container)) return true;
   return !hasUnsafeDescendant(container);
 }
 

@@ -51,7 +51,15 @@ afterEach(() => {
   engine?.flush();
   engine = undefined;
   document.body.replaceChildren();
+  document.head.replaceChildren();
+  vi.useRealTimers();
 });
+
+// A subtree walk started by the scanner is the observable signal that a rescan
+// ran: reconciliation walks the same root with different filters.
+function subtreeScans(spy: { mock: { calls: unknown[][] } }, root: Node): number {
+  return spy.mock.calls.filter((call) => call[0] === root && call[1] === 5).length;
+}
 
 describe('TayamunDirectionEngine', () => {
   it('returns from startup before traversing the document and bounds each scheduled slice', () => {
@@ -409,6 +417,242 @@ describe('TayamunDirectionEngine', () => {
     paragraph.textContent = 'English';
     await settle();
     expect(paragraph.style.direction).toBe('ltr');
+  });
+
+  it('refreshes exclusions changed while mutation observers are disconnected', () => {
+    document.body.innerHTML = '<div id="editor">العربية</div>';
+    const editor = document.querySelector<HTMLElement>('#editor')!;
+    engine = new TayamunDirectionEngine(document, defaults);
+    engine.start();
+    engine.flush();
+    expect(editor.hasAttribute('data-tayamun-affected-q7m3')).toBe(true);
+
+    engine.updateSettings({ ...defaults, enabled: false });
+    engine.flush();
+    editor.className = 'CodeMirror';
+    engine.updateSettings(defaults);
+    engine.flush();
+
+    expect(editor.hasAttribute('data-tayamun-affected-q7m3')).toBe(false);
+  });
+
+  it('ignores exact attribute rewrites but rescans serialized class changes', async () => {
+    document.body.innerHTML = '<div id="target" class="one two" dir="rtl">العربية</div>';
+    engine = new TayamunDirectionEngine(document, defaults, {
+      scheduler: new FakeScheduler(),
+      classMutationDebounceMs: 0,
+    });
+    engine.start();
+    engine.flush();
+    await settle();
+    const target = document.querySelector<HTMLElement>('#target')!;
+    const walkerSpy = vi.spyOn(document, 'createTreeWalker');
+
+    target.setAttribute('class', 'one two');
+    target.setAttribute('dir', 'rtl');
+    await settle();
+    await settle();
+    expect(subtreeScans(walkerSpy, target)).toBe(0);
+
+    // Raw class attribute selectors can distinguish token order and whitespace.
+    target.setAttribute('class', 'two  one');
+    await settle();
+    await settle();
+    expect(subtreeScans(walkerSpy, target)).toBe(1);
+
+    target.setAttribute('class', 'one three');
+    await settle();
+    await settle();
+    expect(subtreeScans(walkerSpy, target)).toBe(2);
+    walkerSpy.mockRestore();
+  });
+
+  it('rescans a class-churning subtree at a bounded, self-throttling interval', async () => {
+    vi.useFakeTimers();
+    document.body.innerHTML = '<div id="target">العربية</div>';
+    let clock = 0;
+    const scheduler: TayamunWorkScheduler = {
+      now: () => clock,
+      schedule(callback) {
+        const id = setTimeout(callback, 0);
+        return () => clearTimeout(id);
+      },
+    };
+    engine = new TayamunDirectionEngine(document, defaults, {
+      scheduler,
+      classMutationDebounceMs: 100,
+    });
+    engine.start();
+    await vi.advanceTimersByTimeAsync(0);
+    engine.flush();
+
+    const target = document.querySelector<HTMLElement>('#target')!;
+    const walkerSpy = vi.spyOn(document, 'createTreeWalker');
+    const scanTimes: number[] = [];
+    const churn = async (steps: number): Promise<void> => {
+      for (let step = 0; step < steps; step += 1) {
+        target.setAttribute('class', `tick-${clock}`);
+        clock += 50;
+        await vi.advanceTimersByTimeAsync(50);
+        engine!.flush();
+        while (scanTimes.length < subtreeScans(walkerSpy, target)) scanTimes.push(clock);
+      }
+    };
+
+    // Rewrites arrive faster than the debounce: a reset-only timer would never fire.
+    await churn(4);
+    expect(scanTimes).toEqual([]);
+
+    await churn(56);
+    expect(scanTimes.length).toBeGreaterThan(0);
+    const gaps = scanTimes.map((time, index) => (index === 0 ? time : time - scanTimes[index - 1]!));
+    expect(gaps.at(-1)!).toBeGreaterThan(gaps[0]!);
+    expect(target.hasAttribute('data-tayamun-affected-q7m3')).toBe(true);
+    walkerSpy.mockRestore();
+  });
+
+  it('leaves the DOM an editor rebuilds untouched while keeping its host fixed', async () => {
+    document.body.innerHTML =
+      '<div id="host" contenteditable="true"><p><span>العربية</span></p></div>';
+    engine = new TayamunDirectionEngine(document, defaults, { scheduler: new FakeScheduler() });
+    engine.start();
+    engine.flush();
+    await settle();
+
+    const host = document.querySelector<HTMLElement>('#host')!;
+    expect(host.hasAttribute('data-tayamun-affected-q7m3')).toBe(true);
+    expect(host.querySelectorAll('[data-tayamun-affected-q7m3]').length).toBe(0);
+
+    // Replaying what a reconciler does on every keystroke: the block is rebuilt.
+    const walkerSpy = vi.spyOn(document, 'createTreeWalker');
+    const paragraph = document.createElement('p');
+    const span = document.createElement('span');
+    span.textContent = 'العربية مرحبا';
+    paragraph.append(span);
+    host.replaceChildren(paragraph);
+    await settle();
+
+    // Marking or scanning the rebuilt block is what makes an editor reconcile
+    // again, so neither may happen.
+    expect(host.querySelectorAll('[data-tayamun-affected-q7m3]').length).toBe(0);
+    expect(subtreeScans(walkerSpy, paragraph)).toBe(0);
+    expect(subtreeScans(walkerSpy, span)).toBe(0);
+    expect(host.hasAttribute('data-tayamun-affected-q7m3')).toBe(true);
+    walkerSpy.mockRestore();
+  });
+
+  it('refreshes editor text facts without scanning or marking rebuilt descendants', async () => {
+    document.body.innerHTML =
+      '<div id="host" contenteditable="true"><span id="lead">English</span><span>العربية</span></div>';
+    const host = document.querySelector<HTMLElement>('#host')!;
+    const lead = document.querySelector<HTMLElement>('#lead')!;
+    engine = new TayamunDirectionEngine(document, defaults);
+    engine.start();
+    engine.flush();
+    expect(host.hasAttribute('data-tayamun-affected-q7m3')).toBe(false);
+    const walkerSpy = vi.spyOn(document, 'createTreeWalker');
+
+    lead.style.display = 'none';
+    await settle();
+
+    expect(host.hasAttribute('data-tayamun-affected-q7m3')).toBe(true);
+    expect(host.querySelectorAll('[data-tayamun-affected-q7m3]')).toHaveLength(0);
+    expect(subtreeScans(walkerSpy, host)).toBe(0);
+    walkerSpy.mockRestore();
+  });
+
+  it('re-evaluates moved editor content against its new host', async () => {
+    document.body.innerHTML = [
+      '<div id="first" contenteditable="true"><span id="text">العربية</span></div>',
+      '<div id="second" contenteditable="true"></div>',
+    ].join('');
+    const first = document.querySelector<HTMLElement>('#first')!;
+    const second = document.querySelector<HTMLElement>('#second')!;
+    const text = document.querySelector<HTMLElement>('#text')!;
+    engine = new TayamunDirectionEngine(document, defaults);
+    engine.start();
+    engine.flush();
+    expect(first.hasAttribute('data-tayamun-affected-q7m3')).toBe(true);
+
+    second.append(text);
+    await settle();
+
+    expect(first.hasAttribute('data-tayamun-affected-q7m3')).toBe(false);
+    expect(second.hasAttribute('data-tayamun-affected-q7m3')).toBe(true);
+    expect(second.querySelectorAll('[data-tayamun-affected-q7m3]')).toHaveLength(0);
+  });
+
+  it('keeps host class churn and code-editor transitions out of editor internals', async () => {
+    document.body.innerHTML = [
+      '<div id="host" contenteditable="true"><p>العربية</p><p>سطر ثان</p></div>',
+      '<div id="wrapper"><p id="line">العربية</p></div>',
+    ].join('');
+    const host = document.querySelector<HTMLElement>('#host')!;
+    const wrapper = document.querySelector<HTMLElement>('#wrapper')!;
+    const line = document.querySelector<HTMLElement>('#line')!;
+    engine = new TayamunDirectionEngine(document, defaults, { classMutationDebounceMs: 0 });
+    engine.start();
+    engine.flush();
+    expect(line.hasAttribute('data-tayamun-affected-q7m3')).toBe(true);
+    const walkerSpy = vi.spyOn(document, 'createTreeWalker');
+
+    host.className = 'focused';
+    wrapper.setAttribute('data-code-editor', '');
+    await settle();
+    await settle();
+
+    expect(subtreeScans(walkerSpy, host)).toBe(0);
+    expect(host.querySelectorAll('[data-tayamun-affected-q7m3]')).toHaveLength(0);
+    expect(line.hasAttribute('data-tayamun-affected-q7m3')).toBe(false);
+    walkerSpy.mockRestore();
+  });
+
+  it('corrects physical left only for a flip and releases it when page alignment changes', async () => {
+    document.head.innerHTML =
+      '<style>.review-left { text-align: left; } .review-center { text-align: center; }</style>';
+    document.body.innerHTML = [
+      '<p id="left" style="text-align: left">العربية English</p>',
+      '<p id="centered" style="text-align: center">العربية</p>',
+      '<p id="plain">العربية</p>',
+      '<p id="native" style="direction: rtl; text-align: left">العربية</p>',
+      '<p id="dynamic" class="review-left">العربية</p>',
+    ].join('');
+    engine = new TayamunDirectionEngine(document, defaults, { classMutationDebounceMs: 0 });
+    engine.start();
+    engine.flush();
+
+    const left = document.querySelector<HTMLElement>('#left')!;
+    const centered = document.querySelector<HTMLElement>('#centered')!;
+    const plain = document.querySelector<HTMLElement>('#plain')!;
+    const native = document.querySelector<HTMLElement>('#native')!;
+    const dynamic = document.querySelector<HTMLElement>('#dynamic')!;
+
+    // alignRight is off: this is not that preference, it only corrects a physical
+    // keyword when Tayamun actually changed the block from LTR to RTL.
+    expect(left.style.getPropertyValue('text-align')).toBe('right');
+    expect(left.style.getPropertyPriority('text-align')).toBe('important');
+    expect(centered.style.textAlign).toBe('center');
+    expect(plain.style.textAlign).toBe('');
+    expect(native.style.textAlign).toBe('left');
+    expect(dynamic.style.textAlign).toBe('right');
+
+    dynamic.className = 'review-center';
+    await settle();
+    await settle();
+    expect(dynamic.style.textAlign).toBe('');
+    expect(getComputedStyle(dynamic).textAlign).toBe('center');
+
+    dynamic.style.cssText = 'direction: rtl; text-align: left';
+    await settle();
+    expect(dynamic.style.textAlign).toBe('left');
+    dynamic.style.cssText = 'direction: ltr; text-align: left';
+    await settle();
+    expect(dynamic.style.textAlign).toBe('right');
+
+    engine.updateSettings({ enabled: false, alignRight: false, improveFont: false });
+    engine.flush();
+    expect(left.style.textAlign).toBe('left');
+    expect(native.style.textAlign).toBe('left');
   });
 
 });

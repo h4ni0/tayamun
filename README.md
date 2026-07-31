@@ -49,6 +49,17 @@ npm run release  # التحقق وحزم المتاجر وأرشيف مصدر Fi
 
 تُنشأ النتائج داخل `.output/`، ولا يرفع المشروع أي حزمة إلى المتاجر تلقائيًا.
 
+## صفحة اختبار كبيرة
+
+ينشئ الأمر صفحة HTML ثابتة تضم العدد المطلوب من العناصر داخل `<body>` بدقة، مع تداخل عميق ونصوص عربية وإنجليزية وأنواع عناصر متعددة:
+
+```sh
+npm run stress:page -- 50000 --depth 48
+python3 -m http.server 8080 --directory .output
+```
+
+افتح العنوان الذي يطبعه الأمر الأول. العمق الافتراضي 48، ويمكن تحديد مسار آخر بالخيار `--output`.
+
 ## بنية المشروع
 
 - `src/core/` — اكتشاف النص واختيار الحاويات الآمنة والاستعادة ومحرك DOM المجدول.
@@ -105,6 +116,17 @@ npm run release  # checks + store ZIPs + Firefox source ZIP
 ```
 
 Build output is written to `.output/`. Production packages are generated locally and are not uploaded automatically.
+
+### Large stress-test page
+
+Generate a static HTML page with an exact number of elements inside `<body>`, deep nesting, mixed Arabic-English text, and varied element types:
+
+```sh
+npm run stress:page -- 50000 --depth 48
+python3 -m http.server 8080 --directory .output
+```
+
+Open the URL printed by the first command. The default depth is 48; use `--output` to choose another path.
 
 ### Project structure
 

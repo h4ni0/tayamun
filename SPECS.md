@@ -14,12 +14,14 @@ Make mixed Arabic/English text readable on any website without changing submitte
 2. Skip whitespace, numbers, punctuation, symbols, emoji, and diacritics.
 3. If the first Unicode letter is from the standard Arabic alphabet, mark the text RTL; otherwise leave it unchanged.
 4. Apply the fix to the nearest text-holding block only, never its layout ancestors.
-5. Re-evaluate dynamic content and live editor input.
+5. Treat a rich editor as one field: fix its editing host and never style, mark, or rescan the DOM the editor rebuilds inside it.
+6. Re-evaluate dynamic content and live editor input.
 
 ## Behavior
 - Enabled on every permitted website by default.
-- Override explicit LTR on affected blocks.
+- Override explicit LTR on affected blocks, including a physical `text-align: left` that the flip turns into the end edge. Centered and justified text is preserved.
 - Never reorder flex/grid items, icons, or controls.
+- Flip a list item as a whole so its bullet or number stays beside its text, and keep that marker inside the item so a left-to-right list cannot clip it.
 - Never rewrite, wrap, or add bidi markers to user content.
 - Exclude code, code editors, passwords, email, URL, and non-text fields.
 - Restore original behavior when text changes or the extension is disabled.
