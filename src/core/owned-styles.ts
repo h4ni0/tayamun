@@ -2,6 +2,10 @@ export interface TayamunStyleOptions {
   alignRight: boolean;
   improveFont: boolean;
   overrideDirection: boolean;
+  /** Computed `text-align` of the block, read before this class owns it. */
+  pageAlignment: string;
+  /** Whether Tayamun changed the block's page direction from LTR to RTL. */
+  directionFlipped: boolean;
 }
 
 type OwnedProperty = 'direction' | 'unicode-bidi' | 'text-align' | 'font-family';
@@ -16,6 +20,8 @@ interface ElementState {
   hadStyleAttribute: boolean;
   alignRight: boolean;
   preserveAlignment: boolean;
+  directionFlipped: boolean;
+  correctPhysicalLeft: boolean;
   properties: Map<OwnedProperty, PropertyState>;
 }
 
@@ -24,23 +30,52 @@ const DIRECTION_PROPERTIES: Readonly<Record<'direction' | 'unicode-bidi', string
   'unicode-bidi': 'isolate',
 };
 
+const PROTECTED_ALIGNMENTS = new Set([
+  'center',
+  '-webkit-center',
+  '-moz-center',
+  'justify',
+  'justify-all',
+]);
+
+// `left` is a physical keyword an author wrote for a left-to-right page. Once the
+// block reads right-to-left it pins the text to the end edge, which is the defect
+// a reader sees as "nothing happened". Logical `start`/`end` need no correction.
+const PHYSICAL_LEFT_ALIGNMENTS = new Set(['left', '-webkit-left', '-moz-left']);
+
 export class OwnedStyles {
   private readonly states = new Map<HTMLElement, ElementState>();
   private pendingStyleMutations = new WeakMap<HTMLElement, number>();
 
   apply(element: HTMLElement, options: TayamunStyleOptions): void {
+    const correctPhysicalLeft =
+      options.directionFlipped && PHYSICAL_LEFT_ALIGNMENTS.has(options.pageAlignment.toLowerCase());
     let state = this.states.get(element);
-    if (!state && !options.overrideDirection && !options.alignRight && !options.improveFont) return;
+    if (
+      !state &&
+      !options.overrideDirection &&
+      !options.alignRight &&
+      !options.improveFont &&
+      !correctPhysicalLeft
+    ) {
+      return;
+    }
     if (!state) {
       state = {
         hadStyleAttribute: element.hasAttribute('style'),
         alignRight: options.alignRight,
+        directionFlipped: options.directionFlipped,
         preserveAlignment: false,
+        correctPhysicalLeft,
         properties: new Map(),
       };
       this.states.set(element, state);
     } else {
       state.alignRight = options.alignRight;
+      state.directionFlipped = options.directionFlipped;
+      // Only trust the reported alignment while the page still owns the property;
+      // afterwards the computed value is this class's own declaration.
+      if (!state.properties.has('text-align')) state.correctPhysicalLeft = correctPhysicalLeft;
     }
 
     if (options.alignRight && !state.properties.has('text-align')) {
@@ -55,7 +90,9 @@ export class OwnedStyles {
         desired.set(property, value);
       }
     }
-    if (options.alignRight && !state.preserveAlignment) desired.set('text-align', 'right');
+    if ((options.alignRight && !state.preserveAlignment) || state.correctPhysicalLeft) {
+      desired.set('text-align', 'right');
+    }
     if (options.improveFont) desired.set('font-family', '"Tajawal Tayamun", Tajawal, sans-serif');
 
     for (const property of [...state.properties.keys()]) {
@@ -121,7 +158,14 @@ export class OwnedStyles {
       // then keep the extension override active until the block is restored.
       propertyState.originalValue = currentValue;
       propertyState.originalPriority = currentPriority;
-      if (property === 'text-align') state.preserveAlignment = this.hasProtectedAlignment(element);
+      if (property === 'text-align') {
+        // The page just restated its own intent, so both alignment verdicts are
+        // derived again from the value it wrote.
+        const alignment = this.computedAlignment(element);
+        state.preserveAlignment = PROTECTED_ALIGNMENTS.has(alignment);
+        state.correctPhysicalLeft =
+          state.directionFlipped && PHYSICAL_LEFT_ALIGNMENTS.has(alignment);
+      }
       changed.push([property, propertyState]);
     }
 
@@ -130,24 +174,49 @@ export class OwnedStyles {
     for (const [property, propertyState] of changed) this.writeDesired(element, property, propertyState);
   }
 
-  refreshAlignment(element: HTMLElement): void {
+  refreshAlignment(element: HTMLElement): boolean {
     const state = this.states.get(element);
-    if (!state?.alignRight) return;
-    const alignment = state.properties.get('text-align');
-    if (!alignment) {
-      state.preserveAlignment = this.hasProtectedAlignment(element);
-      return;
+    const direction = state?.properties.get('direction');
+    const alignment = state?.properties.get('text-align');
+    for (const [property, propertyState] of [
+      ['direction', direction],
+      ['text-align', alignment],
+    ] as const) {
+      if (!propertyState) continue;
+      this.recordStyleWrite(element);
+      if (propertyState.originalValue) {
+        element.style.setProperty(property, propertyState.originalValue, propertyState.originalPriority);
+      } else {
+        element.style.removeProperty(property);
+      }
     }
 
-    if (alignment.originalValue) {
-      this.recordStyleWrite(element);
-      element.style.setProperty('text-align', alignment.originalValue, alignment.originalPriority);
+    const pageStyle = element.ownerDocument.defaultView?.getComputedStyle(element);
+    const computedDirection = (pageStyle?.direction ?? '').trim().toLowerCase();
+    const declaredDirection = element.getAttribute('dir')?.trim().toLowerCase();
+    const pageDirection =
+      computedDirection === 'ltr' || computedDirection === 'rtl'
+        ? computedDirection
+        : declaredDirection === 'ltr' || declaredDirection === 'rtl'
+          ? declaredDirection
+          : computedDirection;
+    const pageAlignment = (pageStyle?.textAlign ?? '').toLowerCase();
+    const directionFlipped = pageDirection !== 'rtl';
+    if (!state) return directionFlipped;
+
+    state.directionFlipped = directionFlipped;
+    state.preserveAlignment = PROTECTED_ALIGNMENTS.has(pageAlignment);
+    state.correctPhysicalLeft =
+      directionFlipped && PHYSICAL_LEFT_ALIGNMENTS.has(pageAlignment);
+    if (direction) this.writeDesired(element, 'direction', direction);
+    if (!alignment) return directionFlipped;
+
+    if ((state.alignRight && !state.preserveAlignment) || state.correctPhysicalLeft) {
+      this.writeDesired(element, 'text-align', alignment);
     } else {
-      this.recordStyleWrite(element);
-      element.style.removeProperty('text-align');
+      state.properties.delete('text-align');
     }
-    state.preserveAlignment = this.hasProtectedAlignment(element);
-    this.writeDesired(element, 'text-align', alignment);
+    return directionFlipped;
   }
 
   restore(element: HTMLElement): void {
@@ -188,15 +257,24 @@ export class OwnedStyles {
     return state?.properties.has('direction') === true;
   }
 
+  needsClassAlignmentRefresh(element: HTMLElement): boolean {
+    const state = this.states.get(element);
+    if (
+      state?.alignRight ||
+      state?.properties.has('direction') ||
+      state?.properties.has('text-align')
+    ) {
+      return true;
+    }
+    return PHYSICAL_LEFT_ALIGNMENTS.has(this.computedAlignment(element));
+  }
+
   private hasProtectedAlignment(element: HTMLElement): boolean {
-    const value = (element.ownerDocument.defaultView?.getComputedStyle(element).textAlign ?? '').toLowerCase();
-    return (
-      value === 'center' ||
-      value === '-webkit-center' ||
-      value === '-moz-center' ||
-      value === 'justify' ||
-      value === 'justify-all'
-    );
+    return PROTECTED_ALIGNMENTS.has(this.computedAlignment(element));
+  }
+
+  private computedAlignment(element: HTMLElement): string {
+    return (element.ownerDocument.defaultView?.getComputedStyle(element).textAlign ?? '').toLowerCase();
   }
 
   private writeDesired(element: HTMLElement, property: OwnedProperty, state: PropertyState): void {

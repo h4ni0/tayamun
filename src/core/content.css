@@ -59,6 +59,15 @@
   unicode-bidi: isolate !important;
 }
 
+/* A flipped list item inside a list the page still lays out left-to-right would
+   place an `outside` marker past the list's inline-end edge, where padding-less
+   or clipping ancestors drop the bullet or number entirely. Keeping the marker
+   in the item's own box preserves it next to the text it belongs to. */
+li[data-tayamun-affected-q7m3],
+summary[data-tayamun-affected-q7m3] {
+  list-style-position: inside !important;
+}
+
 /* Font markers are applied in bounded scheduler slices to avoid one large reflow. */
 [data-tayamun-font-q7m3] {
   font-family: "Tajawal Tayamun", Tajawal, sans-serif !important;

@@ -1,2 +1,2 @@
 export { TayamunDirectionEngine } from './engine';
-export { firstUnicodeLetterIsArabic } from './detection';
+export { textShouldUseRtl } from './detection';

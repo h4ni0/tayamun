@@ -23,6 +23,7 @@
     "compile": "tsc --noEmit",
     "test": "vitest run --environment happy-dom",
     "check": "npm run compile && npm test",
+    "stress:page": "node scripts/generate-stress-page.mjs",
     "build": "npm run build:chrome && npm run build:firefox",
     "build:chrome": "wxt build -b chrome",
     "build:firefox": "wxt build -b firefox",
