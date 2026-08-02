@@ -106,7 +106,6 @@ input {
 }
 
 h1,
-.brand p,
 .site-heading,
 .restricted-panel p,
 .save-status,
@@ -118,12 +117,6 @@ h1 {
   color: #123c5a;
   font-size: 22px;
   line-height: 1.2;
-}
-
-.brand p {
-  margin-block-start: 3px;
-  color: #647069;
-  font-size: 13px;
 }
 
 .site-panel,
