@@ -37,7 +37,7 @@
     "happy-dom": "^20.10.6",
     "typescript": "^7.0.2",
     "vitest": "^4.1.10",
-    "wxt": "^0.20.27"
+    "wxt": "^0.21.3"
   },
   "overrides": {
     "esbuild": "0.28.1",
