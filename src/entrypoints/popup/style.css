@@ -63,6 +63,8 @@
   background: #f4f8f9;
   font-family: 'Tajawal Tayamun', Tahoma, Arial, sans-serif;
   font-synthesis: none;
+  overflow-wrap: break-word;
+  overflow-x: hidden;
 }
 
 * {
@@ -77,6 +79,7 @@ body {
   width: 350px;
   min-height: 390px;
   margin: 0;
+  overflow-x: hidden;
   background:
     radial-gradient(circle at 100% 0, rgb(46 196 182 / 14%), transparent 42%),
     #f4f8f9;
@@ -146,7 +149,13 @@ h1 {
   font-size: 12px;
 }
 
+.site-heading span {
+  flex-shrink: 0;
+}
+
 .site-heading strong {
+  flex: 1;
+  min-width: 0;
   overflow: hidden;
   color: #274b61;
   font-size: 12px;
