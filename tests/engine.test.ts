@@ -206,9 +206,10 @@ describe('TayamunDirectionEngine', () => {
   });
 
   it('applies optional alignment and font only while enabled, preserving center and justify', async () => {
+    document.head.innerHTML = '<style>.left-aligned { font-family: serif !important; }</style>';
     document.body.innerHTML = [
       '<p id="target" style="text-align: justify">العربية English</p>',
-      '<p id="left" style="text-align: left">العربية English</p>',
+      '<p id="left" class="left-aligned" style="text-align: left">العربية English</p>',
     ].join('');
     const paragraph = document.querySelector<HTMLElement>('#target')!;
     const leftParagraph = document.querySelector<HTMLElement>('#left')!;
@@ -222,11 +223,13 @@ describe('TayamunDirectionEngine', () => {
     engine.updateSettings({ enabled: true, alignRight: true, improveFont: true });
     engine.flush();
     expect(paragraph.style.textAlign).toBe('justify');
-    expect(leftParagraph.style.getPropertyValue('text-align')).toBe('right');
-    expect(leftParagraph.style.getPropertyPriority('text-align')).toBe('important');
     expect(paragraph.hasAttribute('data-tayamun-font-q7m3')).toBe(true);
+    expect(leftParagraph.style.getPropertyValue('text-align')).toBe('right');
+    expect(getComputedStyle(leftParagraph).fontFamily).toBe('"Tajawal Tayamun", Tajawal, sans-serif');
+    expect(leftParagraph.style.getPropertyPriority('text-align')).toBe('important');
+    expect(leftParagraph.style.fontFamily).toBe('"Tajawal Tayamun", Tajawal, sans-serif');
     expect(paragraph.hasAttribute('data-tayamun-affected-q7m3')).toBe(true);
-    expect(paragraph.style.fontFamily).toBe('');
+    expect(paragraph.style.fontFamily).toBe('"Tajawal Tayamun", Tajawal, sans-serif');
 
     leftParagraph.style.setProperty('text-align', 'center');
     await settle();
@@ -254,7 +257,9 @@ describe('TayamunDirectionEngine', () => {
 
     expect(walkerSpy).not.toHaveBeenCalled();
     expect(document.querySelector<HTMLElement>('p')!.hasAttribute('data-tayamun-font-q7m3')).toBe(true);
-    expect(document.querySelector<HTMLElement>('p')!.style.fontFamily).toBe('');
+    expect(document.querySelector<HTMLElement>('p')!.style.fontFamily).toBe(
+      '"Tajawal Tayamun", Tajawal, sans-serif',
+    );
     walkerSpy.mockRestore();
   });
 

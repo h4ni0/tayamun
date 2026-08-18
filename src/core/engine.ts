@@ -1288,7 +1288,7 @@ export class TayamunDirectionEngine {
             if (next.value.isConnected) {
               this.styles.apply(next.value, {
                 alignRight: this.settings.alignRight,
-                improveFont: false,
+                improveFont: this.settings.improveFont,
                 overrideDirection: this.needsDirectionOverride(next.value),
                 pageAlignment: computedStyleFor(next.value)?.textAlign ?? '',
                 directionFlipped: this.directionFlipped.get(next.value) ?? false,
@@ -1329,8 +1329,19 @@ export class TayamunDirectionEngine {
           const next = iterator.next();
           if (!next.done) {
             remaining -= 1;
-            if (next.value.isConnected) this.setElementFont(next.value, this.settings.improveFont);
-            else this.restore(next.value);
+            if (next.value.isConnected) {
+              this.setElementFont(next.value, this.settings.improveFont);
+              const pageStyle = computedStyleFor(next.value);
+              this.styles.apply(next.value, {
+                alignRight: this.settings.alignRight,
+                improveFont: this.settings.improveFont,
+                overrideDirection: this.needsDirectionOverride(next.value),
+                pageAlignment: pageStyle?.textAlign ?? '',
+                directionFlipped: this.directionFlipped.get(next.value) ?? false,
+              });
+            } else {
+              this.restore(next.value);
+            }
             return false;
           }
           remaining = 0;
@@ -1496,7 +1507,7 @@ export class TayamunDirectionEngine {
     this.setElementFont(element, this.settings.improveFont);
     this.styles.apply(element, {
       alignRight: this.settings.alignRight,
-      improveFont: false,
+      improveFont: this.settings.improveFont,
       overrideDirection: this.needsDirectionOverride(element),
       pageAlignment,
       directionFlipped,
